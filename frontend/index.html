@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNC Parça Ölçüm Sistemi</title>
+    <meta name="description" content="Silindirik CNC parçalarının çap ve uzunluk ölçüm sistemi — Görüntü İşleme">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⚙️</text></svg>">
+</head>
+
+<body>
+    <div class="app-container">
+
+        <!-- ═══ Header ═══ -->
+        <header class="app-header">
+            <div class="logo-group">
+                <div class="logo-icon">⚙️</div>
+                <span class="logo-text">CNC Tespit</span>
+                <span class="logo-badge">v2.0</span>
+            </div>
+            <div class="header-info">
+                <div class="calibration-badge" id="calibration-badge">
+                    <span class="cal-dot"></span>
+                    <span id="calibration-status">Kalibrasyon yok</span>
+                </div>
+                <div class="image-info-badge" id="image-info-badge">
+                    <span class="dot"></span>
+                    <span id="image-info-text">—</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ═══ Main Content ═══ -->
+        <div class="main-content">
+
+            <!-- ─── Sidebar ─── -->
+            <aside class="sidebar">
+                <!-- Tab Navigation -->
+                <div class="sidebar-tabs">
+                    <button class="sidebar-tab active" data-tab="tab-algorithms" id="tab-btn-algorithms">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
+                            height="16">
+                            <circle cx="12" cy="12" r="3" />
+                            <path
+                                d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+                        </svg>
+                        Algoritmalar
+                    </button>
+                    <button class="sidebar-tab" data-tab="tab-calibration" id="tab-btn-calibration">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
+                            height="16">
+                            <path d="M2 12h5" />
+                            <path d="M17 12h5" />
+                            <path d="M12 2v5" />
+                            <path d="M12 17v5" />
+                            <circle cx="12" cy="12" r="4" />
+                        </svg>
+                        Kalibrasyon
+                    </button>
+                    <button class="sidebar-tab" data-tab="tab-measure" id="tab-btn-measure">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
+                            height="16">
+                            <path d="M21 3H3v18h18V3z" />
+                            <path d="M21 9H3" />
+                            <path d="M21 15H3" />
+                            <path d="M9 3v18" />
+                            <path d="M15 3v18" />
+                        </svg>
+                        Ölçüm
+                    </button>
+                </div>
+
+                <!-- Upload Section (always visible) -->
+                <div class="sidebar-section">
+                    <div class="sidebar-section-header">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14"
+                            height="14">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        Görüntü Yükleme
+                    </div>
+                    <div class="upload-section">
+                        <div class="upload-zone" id="upload-zone">
+                            <div class="upload-zone-icon">📷</div>
+                            <div class="upload-zone-text">Fotoğrafı <strong>sürükleyin</strong><br>veya tıklayın</div>
+                            <div class="upload-zone-formats">PNG, JPG, BMP, TIFF</div>
+                        </div>
+                        <input type="file" id="file-input" accept=".png,.jpg,.jpeg,.bmp,.tiff,.tif,.webp">
+                    </div>
+                    <div class="thumbnail-preview" id="thumbnail-preview">
+                        <div class="thumbnail-container">
+                            <img id="thumbnail-img" src="" alt="Yüklenen görüntü">
+                            <div class="thumbnail-overlay">
+                                <span class="thumbnail-name" id="thumbnail-name">—</span>
+                                <button class="btn-change-image" id="btn-change-image">Değiştir</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Algorithms -->
+                <div class="sidebar-tab-content active" id="tab-algorithms">
+                    <div class="sidebar-section" style="flex:1; overflow:hidden;">
+                        <div class="sidebar-section-header">Algoritmalar</div>
+                        <div class="algorithm-list" id="algorithm-list"></div>
+                    </div>
+                </div>
+
+                <!-- Tab: Calibration -->
+                <div class="sidebar-tab-content" id="tab-calibration">
+                    <div class="sidebar-section">
+                        <div class="sidebar-section-header">Kalibrasyon Ayarları</div>
+                        <div class="calibration-panel">
+                            <p class="cal-hint">Görüntü üzerinde bilinen ölçüdeki iki noktayı seçin, ardından gerçek
+                                değeri mm olarak girin.</p>
+
+                            <div class="cal-mode-toggle">
+                                <button class="cal-mode-btn active" data-mode="line" id="cal-mode-line">📏 Çizgi
+                                    Çiz</button>
+                                <button class="cal-mode-btn" data-mode="manual" id="cal-mode-manual">⌨️ Manuel</button>
+                            </div>
+
+                            <!-- Çizgi modu -->
+                            <div class="cal-line-section" id="cal-line-section">
+                                <div class="cal-points-display">
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Nokta 1:</span>
+                                        <span class="cal-point-value" id="cal-point1">—</span>
+                                    </div>
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Nokta 2:</span>
+                                        <span class="cal-point-value" id="cal-point2">—</span>
+                                    </div>
+                                    <div class="cal-point">
+                                        <span class="cal-point-label">Mesafe:</span>
+                                        <span class="cal-point-value" id="cal-distance">— px</span>
+                                    </div>
+                                </div>
+                                <div class="param-group">
+                                    <label class="param-label">Gerçek Ölçü (mm)</label>
+                                    <input type="number" class="param-input" id="cal-reference-mm"
+                                        placeholder="örn: 30.0" step="0.01" min="0.01">
+                                </div>
+                                <button class="btn-apply btn-calibrate" id="btn-calibrate" disabled>Kalibre Et</button>
+                            </div>
+
+                            <!-- Manuel mod -->
+                            <div class="cal-manual-section hidden" id="cal-manual-section">
+                                <div class="param-group">
+                                    <label class="param-label">Piksel/mm Oranı</label>
+                                    <input type="number" class="param-input" id="cal-manual-ppmm"
+                                        placeholder="örn: 5.25" step="0.01" min="0.01">
+                                </div>
+                                <button class="btn-apply btn-calibrate" id="btn-calibrate-manual">Manuel Kalibre
+                                    Et</button>
+                            </div>
+
+                            <!-- Kalibrasyon sonucu -->
+                            <div class="cal-result hidden" id="cal-result">
+                                <div class="cal-result-header">✅ Kalibrasyon Aktif</div>
+                                <div class="cal-result-value">
+                                    <span>Piksel/mm:</span>
+                                    <strong id="cal-result-ppmm">—</strong>
+                                </div>
+                                <div class="cal-result-value">
+                                    <span>1 mm =</span>
+                                    <strong id="cal-result-px">— px</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Measurement -->
+                <div class="sidebar-tab-content" id="tab-measure">
+                    <div class="sidebar-section">
+                        <div class="sidebar-section-header">Ölçüm Parametreleri</div>
+                        <div class="measure-panel">
+                            <div class="param-group">
+                                <label class="param-label">Min Bölüm Genişliği (px) <span class="param-value-display"
+                                        id="val-min-section">20</span></label>
+                                <input type="range" id="measure-min-section" min="5" max="100" value="20" step="5">
+                            </div>
+                            <div class="param-group">
+                                <label class="param-label">Gradyan Eşiği <span class="param-value-display"
+                                        id="val-gradient">2.0</span></label>
+                                <input type="range" id="measure-gradient" min="0.5" max="10" value="2" step="0.5">
+                            </div>
+                            <div class="param-group">
+                                <label class="param-label">Blur Kernel <span class="param-value-display"
+                                        id="val-blur">5</span></label>
+                                <input type="range" id="measure-blur" min="1" max="15" value="5" step="2">
+                            </div>
+                            <div class="param-group">
+                                <label class="param-label">Morfoloji Kernel <span class="param-value-display"
+                                        id="val-morph">5</span></label>
+                                <input type="range" id="measure-morph" min="1" max="15" value="5" step="2">
+                            </div>
+                            <div class="param-group">
+                                <label class="param-label">Min Kontur Alanı <span class="param-value-display"
+                                        id="val-contour">5000</span></label>
+                                <input type="range" id="measure-contour-area" min="500" max="50000" value="5000"
+                                    step="500">
+                            </div>
+
+                            <div class="measure-buttons">
+                                <button class="btn-apply btn-measure-profile" id="btn-profile">📊 Profil Çıkar</button>
+                                <button class="btn-apply btn-measure-full" id="btn-measure">📐 Tam Ölçüm</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- ─── Content Area ─── -->
+            <main class="content-area">
+                <div class="content-toolbar">
+                    <div class="toolbar-left">
+                        <div class="active-algo-title" id="active-algo-title">Algoritma seçin</div>
+                    </div>
+                    <div class="toolbar-right">
+                        <div class="view-toggle">
+                            <button class="active" data-view="split" id="btn-split">Yan Yana</button>
+                            <button data-view="single" id="btn-single">Tek Görünüm</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="image-workspace" id="image-workspace">
+                    <div class="empty-state" id="empty-state">
+                        <div class="empty-state-icon">📐</div>
+                        <div class="empty-state-text">CNC Parça Ölçüm Sistemi</div>
+                        <div class="empty-state-hint">Başlamak için sol panelden fotoğraf yükleyin</div>
+                    </div>
+
+                    <div class="image-panel original-panel hidden" id="original-panel">
+                        <span class="image-panel-label original">Orijinal</span>
+                        <canvas id="original-canvas" style="display:none;"></canvas>
+                        <img id="original-image" src="" alt="Orijinal görüntü">
+                    </div>
+
+                    <div class="image-divider hidden" id="image-divider"></div>
+
+                    <div class="image-panel processed-panel hidden" id="processed-panel">
+                        <span class="image-panel-label processed">İşlenmiş</span>
+                        <img id="processed-image" src="" alt="İşlenmiş görüntü">
+                    </div>
+
+                    <div class="loading-overlay" id="loading-overlay">
+                        <div class="spinner"></div>
+                        <div class="loading-text">İşleniyor...</div>
+                    </div>
+                </div>
+
+                <!-- Parameter Panel (algorithms) -->
+                <div class="param-panel" id="param-panel">
+                    <div class="param-panel-header">
+                        <span class="param-panel-title">🎛️ Parametreler</span>
+                        <button class="btn-apply" id="btn-apply">Uygula</button>
+                    </div>
+                    <div class="params-grid" id="params-grid"></div>
+                </div>
+
+                <!-- Measurement Table -->
+                <div class="measurement-table-panel hidden" id="measurement-table-panel">
+                    <div class="measurement-table-header">
+                        <div>
+                            <span class="param-panel-title">📊 Ölçüm Sonuçları</span>
+                            <span class="measure-summary" id="measure-summary"></span>
+                        </div>
+                    </div>
+                    <div class="measurement-table-wrapper">
+                        <table class="measurement-table" id="measurement-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Tip</th>
+                                    <th>Açıklama</th>
+                                    <th>Ölçülen (mm)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="measurement-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+    <script src="/js/app.js"></script>
+</body>
+
+</html>
