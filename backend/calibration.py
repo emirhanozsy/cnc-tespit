@@ -8,47 +8,100 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 
+# ---------------------------------------------------------------------------
+# Sabit Görüntü Boyutu Düzeltmesi
+# ---------------------------------------------------------------------------
+# Yüklenen görseller sabit 1024x647 boyutundadır.
+# Bu görüntüde X ve Y yönlerindeki piksel yoğunluğu farklıdır (kare piksel değil).
+# Çap kalibrasyonu (Y-ekseni) doğru sonuç verirken, aynı oran uzunluk (X-ekseni)
+# için yanlış sonuç verir. Bu düzeltme faktörü ölçüm verisinden hesaplanmıştır:
+#   Gerçek uzunluk / Ölçülen uzunluk = 18.90 / 14.81 = 1.2762
+# pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
+# ---------------------------------------------------------------------------
+ASPECT_CORRECTION_FACTOR = 1.2762
+
+
 class CalibrationProfile:
-    """Kalibrasyon profili — piksel/mm oranını saklar."""
+    """Kalibrasyon profili — ayrı X ve Y ekseni piksel/mm oranlarını saklar."""
 
     def __init__(self, pixels_per_mm: float = 1.0, reference_diameter_mm: float = 0.0,
-                 reference_pixels: float = 0.0, name: str = "default"):
+                 reference_pixels: float = 0.0, name: str = "default",
+                 pixels_per_mm_x: float = None, pixels_per_mm_y: float = None):
         self.name = name
         self.pixels_per_mm = pixels_per_mm
         self.reference_diameter_mm = reference_diameter_mm
         self.reference_pixels = reference_pixels
+        # Y-ekseni (dikey/çap) oranı
+        self.pixels_per_mm_y = pixels_per_mm_y if pixels_per_mm_y is not None else pixels_per_mm
+        # X-ekseni (yatay/uzunluk) oranı — otomatik hesaplanır
+        if pixels_per_mm_x is not None:
+            self.pixels_per_mm_x = pixels_per_mm_x
+        else:
+            # Sabit 1024x647 görüntü boyutu düzeltmesi
+            self.pixels_per_mm_x = self.pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
 
     def pixels_to_mm(self, pixels: float) -> float:
-        """Piksel değerini mm'ye çevir."""
+        """Piksel değerini mm'ye çevir (geriye uyumluluk — Y ekseni)."""
         if self.pixels_per_mm <= 0:
             return 0.0
         return pixels / self.pixels_per_mm
+
+    def pixels_to_mm_y(self, pixels: float) -> float:
+        """Y-ekseni (dikey) piksel değerini mm'ye çevir — çap ölçümü için."""
+        if self.pixels_per_mm_y <= 0:
+            return 0.0
+        return pixels / self.pixels_per_mm_y
+
+    def pixels_to_mm_x(self, pixels: float) -> float:
+        """X-ekseni (yatay) piksel değerini mm'ye çevir — uzunluk ölçümü için."""
+        if self.pixels_per_mm_x <= 0:
+            return 0.0
+        return pixels / self.pixels_per_mm_x
 
     def mm_to_pixels(self, mm: float) -> float:
         """mm değerini piksele çevir."""
         return mm * self.pixels_per_mm
 
+    def set_x_calibration(self, pixels_per_mm_x: float):
+        """X-ekseni kalibrasyonunu ayrıca ayarla."""
+        self.pixels_per_mm_x = pixels_per_mm_x
+
+    def set_y_calibration(self, pixels_per_mm_y: float):
+        """Y-ekseni kalibrasyonunu ayarla ve X-eksenini otomatik hesapla."""
+        self.pixels_per_mm_y = pixels_per_mm_y
+        self.pixels_per_mm = pixels_per_mm_y  # Geriye uyumluluk
+        # X-eksenini otomatik güncelle
+        self.pixels_per_mm_x = pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "pixels_per_mm": self.pixels_per_mm,
+            "pixels_per_mm_x": self.pixels_per_mm_x,
+            "pixels_per_mm_y": self.pixels_per_mm_y,
             "reference_diameter_mm": self.reference_diameter_mm,
             "reference_pixels": self.reference_pixels,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "CalibrationProfile":
+        ppmm = data.get("pixels_per_mm", 1.0)
+        # pixels_per_mm_x kayıtlıysa onu kullan, yoksa otomatik hesaplansın (None)
+        ppmm_x = data.get("pixels_per_mm_x", None)
         return cls(
-            pixels_per_mm=data.get("pixels_per_mm", 1.0),
+            pixels_per_mm=ppmm,
             reference_diameter_mm=data.get("reference_diameter_mm", 0.0),
             reference_pixels=data.get("reference_pixels", 0.0),
             name=data.get("name", "default"),
+            pixels_per_mm_x=ppmm_x,
+            pixels_per_mm_y=data.get("pixels_per_mm_y", ppmm),
         )
 
 
 def calculate_calibration(reference_diameter_mm: float, point1_y: float, point2_y: float) -> CalibrationProfile:
     """
     İki nokta arasındaki piksel mesafesi ve bilinen çap değerinden kalibrasyon hesapla.
+    Bu Y-ekseni (dikey) kalibrasyonudur.
 
     Args:
         reference_diameter_mm: Referans çap değeri (mm)
@@ -69,6 +122,7 @@ def calculate_calibration(reference_diameter_mm: float, point1_y: float, point2_
         reference_diameter_mm=reference_diameter_mm,
         reference_pixels=pixel_distance,
         name="custom",
+        pixels_per_mm_y=pixels_per_mm,
     )
 
 
@@ -90,6 +144,26 @@ def calculate_calibration_from_line(reference_length_mm: float, x1: float, y1: f
         reference_pixels=pixel_distance,
         name="custom",
     )
+
+
+def calculate_x_calibration(reference_length_mm: float, x1: float, x2: float) -> float:
+    """
+    X-ekseni (yatay) kalibrasyonu: bilinen uzunluktaki bir bölümün
+    iki x koordinatından piksel/mm oranı hesapla.
+
+    Args:
+        reference_length_mm: Bilinen uzunluk (mm)
+        x1: Birinci nokta x koordinatı (piksel)
+        x2: İkinci nokta x koordinatı (piksel)
+
+    Returns:
+        float: X-ekseni piksel/mm oranı
+    """
+    pixel_distance = abs(x2 - x1)
+    if pixel_distance == 0 or reference_length_mm <= 0:
+        raise ValueError("Geçersiz kalibrasyon değerleri: piksel mesafesi ve uzunluk sıfırdan büyük olmalı")
+
+    return pixel_distance / reference_length_mm
 
 
 # ---------------------------------------------------------------------------
