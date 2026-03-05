@@ -4,6 +4,18 @@
 
 ---
 
+## [v4.5] — 2026-03-05
+
+### Arayüz Görünümü (Overlay) Temizleme
+- Algoritmalar, Kalibrasyon ve Ölçüm sekmeleri arasında geçiş yapıldığında, önceki sekmeden kalan 
+  ölçüm çizgileri, kırmızı profil kutuları veya kalibrasyon yeşil okları (overlay görüntüleri) 
+  ekranda asılı kalıyordu.
+- Artık sekmeler arası geçiş yapıldığında ekran otomatik olarak temizleniyor ve algoritma uygulanmış 
+  görüntünün **saf haline** (çizgisiz) geri dönüyor. Başlık etiketleri ve parametreler de ait oldukları
+  sekmeye göre sıfırlanıyor.
+
+---
+
 ## [v4.4] — 2026-03-05
 
 ### Kalibrasyon ve Ölçüm Sapması Düzeltmesi

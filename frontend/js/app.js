@@ -196,8 +196,41 @@ function setupTabs() {
                 DOM.originalPanel.classList.remove('calibrating');
                 DOM.processedPanel.classList.remove('calibrating');
             }
+
+            // Overlayleri (ölçüm çizgileri, kenar çizgileri) temizle ve saf haline dön
+            resetOverlays(btn.dataset.tab);
         });
     });
+}
+
+// Sekme değiştiğinde geçici çizgileri, ölçümleri (overlay) temizler, saf görseli gösterir
+function resetOverlays(activeTabId) {
+    if (!state.imageId) return;
+
+    // Orijinal her zaman imageUrl'dir.
+    DOM.originalImage.src = state.imageUrl;
+
+    // İşlenmiş panel ise, algoritma uygulanmışsa processedUrl'dir.
+    // Yoksa aynı imageUrl'dir (henüz algoritma yoksa).
+    if (state.processedUrl) {
+        DOM.processedImage.src = state.processedUrl;
+    } else {
+        DOM.processedImage.src = state.imageUrl;
+    }
+
+    // Başlık ve etiketleri tab'a uygun sıfırla
+    if (activeTabId === 'tab-algorithms') {
+        if (state.selectedAlgorithm) {
+            DOM.activeAlgoTitle.innerHTML = `${state.selectedAlgorithm.display_name} <span class="algo-badge">${state.selectedAlgorithm.params.length} parametre</span>`;
+        } else {
+            DOM.activeAlgoTitle.innerHTML = 'Önizleme';
+        }
+    } else if (activeTabId === 'tab-calibration') {
+        DOM.activeAlgoTitle.innerHTML = 'Kalibrasyon <span class="algo-badge">hazır</span>';
+        resetEdgeDisplay(); // Kalibrasyon panelindeki eski tıklama değerlerini sil
+    } else if (activeTabId === 'tab-measurement') {
+        DOM.activeAlgoTitle.innerHTML = 'Ölçüm <span class="algo-badge">bekliyor</span>';
+    }
 }
 
 // Kalibrasyon hint metnini güncelle
@@ -282,6 +315,7 @@ async function handleFile(file) {
         const r = await API.uploadImage(file);
         state.imageId = r.image_id; state.imageUrl = r.url; state.imageName = r.filename;
         state.processedImageId = null; // Yeni görsel yüklenince sıfırla
+        state.processedUrl = null; // Görsel atamasını da sıfırla
         DOM.uploadZone.style.display = 'none';
         DOM.thumbnailPreview.classList.add('visible');
         DOM.thumbnailImg.src = r.url; DOM.thumbnailName.textContent = r.filename;
@@ -309,8 +343,11 @@ async function applyAlgorithm() {
     try {
         const r = await API.processImage(state.imageId, state.selectedAlgorithm.name, state.currentParams);
         DOM.processedImage.src = r.result_image;
-        // İşlenmiş görüntü ID'sini sakla — kalibrasyon bu görsel üzerinden yapılabilir
+
+        // İşlenmiş görüntü ID'sini ve resim URL'sini sakla (sekmeler arası geçişte lazım)
         state.processedImageId = r.processed_image_id || null;
+        state.processedUrl = r.result_image || null;
+
         updateCalibrationHint();
         showImagePanels();
         showToast(`${state.selectedAlgorithm.display_name} uygulandı`, 'success');
