@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from image_processing import get_algorithm_list, apply_algorithm
 from calibration import (
     CalibrationProfile, calculate_calibration, calculate_calibration_from_line,
+    calculate_x_calibration,
     save_profile, load_profile, list_profiles,
 )
 from profile_extractor import extract_profile, draw_profile_overlay
@@ -103,6 +104,13 @@ class EdgeDetectRequest(BaseModel):
     click_y: float
     blur_ksize: int = 5
     morph_ksize: int = 5
+
+
+class XCalibrateRequest(BaseModel):
+    reference_length_mm: float
+    x1: float
+    x2: float
+    profile_name: Optional[str] = None
 
 
 class ReportRequest(BaseModel):
@@ -413,6 +421,35 @@ async def load_calibration_profile(profile_name: str):
         return active_calibration.to_dict()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Profil bulunamadı: {profile_name}")
+
+
+@app.post("/api/calibrate/x-axis")
+async def calibrate_x_axis(request: XCalibrateRequest):
+    """
+    X-ekseni (yatay) kalibrasyonu: bilinen uzunluktaki bir bölümün
+    iki x koordinatından X-ekseni piksel/mm oranını hesapla.
+    Mevcut Y-ekseni kalibrasyonu korunur.
+    """
+    global active_calibration
+    try:
+        ppmm_x = calculate_x_calibration(
+            request.reference_length_mm, request.x1, request.x2
+        )
+        active_calibration.set_x_calibration(ppmm_x)
+
+        if request.profile_name:
+            active_calibration.name = request.profile_name
+            save_profile(active_calibration, request.profile_name)
+
+        return {
+            "pixels_per_mm_x": round(ppmm_x, 4),
+            "pixels_per_mm_y": round(active_calibration.pixels_per_mm_y, 4),
+            "reference_length_mm": request.reference_length_mm,
+            "pixel_distance": round(abs(request.x2 - request.x1), 2),
+            "saved": request.profile_name is not None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

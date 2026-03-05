@@ -68,6 +68,7 @@ function cacheDom() {
     DOM.calResult = document.getElementById('cal-result');
     DOM.calResultPpmm = document.getElementById('cal-result-ppmm');
     DOM.calResultPx = document.getElementById('cal-result-px');
+    DOM.calResultPpmmX = document.getElementById('cal-result-ppmm-x');
     // Measurement
     DOM.btnProfile = document.getElementById('btn-profile');
     DOM.btnMeasure = document.getElementById('btn-measure');
@@ -461,8 +462,10 @@ function resetEdgeDisplay() {
 function setCalibrationResult(ppmm) {
     state.calibrated = true;
     state.pixelsPerMm = ppmm;
+    const ppmmX = ppmm / 1.2762;  // Otomatik X düzeltmesi (sabit 1024x647 görüntü)
     DOM.calResult.classList.remove('hidden');
     DOM.calResultPpmm.textContent = ppmm.toFixed(4);
+    DOM.calResultPpmmX.textContent = ppmmX.toFixed(4);
     DOM.calResultPx.textContent = `${ppmm.toFixed(2)} px`;
     DOM.calibrationBadge.classList.add('visible', 'calibrated');
     DOM.calibrationStatus.textContent = `${ppmm.toFixed(2)} px/mm`;

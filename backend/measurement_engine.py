@@ -92,9 +92,9 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
         std_diameter_px = float(np.std(valid_diameters))
         width_px = e - s
 
-        # mm'ye çevir
-        diameter_mm = calibration.pixels_to_mm(avg_diameter_px)
-        length_mm = calibration.pixels_to_mm(width_px)
+        # mm'ye çevir — çap Y-ekseni, uzunluk X-ekseni kalibrasyonu kullanır
+        diameter_mm = calibration.pixels_to_mm_y(avg_diameter_px)
+        length_mm = calibration.pixels_to_mm_x(width_px)
 
         # Orta noktadaki üst/alt kenar
         mid_idx = (s + e) // 2
