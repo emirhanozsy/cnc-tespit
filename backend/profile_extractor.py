@@ -48,11 +48,18 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
 
     if is_edge_map:
         # KENAR HARİTASI MODU (siyah zemin, beyaz çizgiler)
-        # 1. Hafif blur ve threshold ile kenarları netleştir
-        binary_edges = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, binary_edges = cv2.threshold(binary_edges, 20, 255, cv2.THRESH_BINARY)
+        # ÖNEMLİ: Kalibrasyon (detect_edges) ile AYNI algoritmayı kullanıyoruz
+        # Böylece kalibrasyon ve ölçüm tutarlı sonuç verir
         
-        # 2. İçi boş (sadece sınırları olan) haritadan solid maske üret
+        # 1. Kernel boyutu - kalibrasyonla aynı
+        mk = morph_ksize if morph_ksize % 2 == 1 else morph_ksize + 1
+        
+        # 2. Dilate kullan - kalibrasyonla AYNI (blur değil!)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+        binary_dilated = cv2.dilate(gray, kernel, iterations=1)
+        _, binary_edges = cv2.threshold(binary_dilated, 20, 255, cv2.THRESH_BINARY)
+        
+        # 3. İçi boş (sadece sınırları olan) haritadan solid maske üret
         h, w = binary_edges.shape
         solid_mask = np.zeros_like(binary_edges)
         for x in range(w):
@@ -65,16 +72,19 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
                 if y2 - y1 > 5:
                     solid_mask[y1:y2+1, x] = 255
                     
-        # 3. Morfolojik temizleme
-        mk = morph_ksize + 2  # Kenar haritasında kopuklukları dikmek için biraz daha agresif
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
-        binary = cv2.morphologyEx(solid_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+        # 4. Morfolojik temizleme - kalibrasyonla tutarlı (daha az agresif)
+        kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
+        binary = cv2.morphologyEx(solid_mask, cv2.MORPH_CLOSE, kernel2, iterations=1)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel2, iterations=1)
     else:
         # NORMAL GÖRÜNTÜ MODU (Otsu Threshold ile solid maske)
-        blurred = cv2.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
+        # Kernel boyutunu tek sayı yap - kalibrasyonla tutarlı
+        blur_k = blur_ksize if blur_ksize % 2 == 1 else blur_ksize + 1
+        mk = morph_ksize if morph_ksize % 2 == 1 else morph_ksize + 1
+        
+        blurred = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
         _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_ksize, morph_ksize))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 

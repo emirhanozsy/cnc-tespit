@@ -4,6 +4,29 @@
 
 ---
 
+## [v4.12] — 2026-03-09
+
+### 🔧 Y-Ekseni (Çap) Kalibrasyon-Ölçüm Tutarlılık Düzeltmesi
+
+**Sorun:**
+- Kalibrasyon ekranında doğru ölçülen çap değeri, ölçüm ekranında yanlış (farklı) çıkıyordu.
+- Kalibrasyon `detect_edges()` fonksiyonu ile yapılıyor, ölçüm `extract_profile()` fonksiyonu ile yapılıyordu.
+- İki fonksiyon **farklı algoritmalar** kullanıyordu:
+  - Kalibrasyon: `cv2.dilate()` + threshold
+  - Ölçüm: `cv2.GaussianBlur()` + threshold + `morph_ksize + 2` (daha agresif)
+
+**Çözüm:**
+- `profile_extractor.py` dosyasında kenar haritası modu, kalibrasyonla **aynı algoritmayı** kullanacak şekilde güncellendi:
+  - `cv2.GaussianBlur()` yerine `cv2.dilate()` kullanılıyor
+  - `morph_ksize + 2` yerine `morph_ksize` kullanılıyor (kalibrasyonla aynı)
+  - Morfolojik iterasyon sayısı 2'den 1'e düşürüldü (kalibrasyonla tutarlı)
+- Normal görüntü modunda da kernel boyutu tek sayıya zorlanıyor (tutarlılık için)
+
+**Etkilenen Dosyalar:**
+- `backend/profile_extractor.py` — Kenar haritası modu algoritması düzeltildi
+
+---
+
 ## [v4.11] — 2026-03-09
 
 ### X-Ekseni Kalibrasyon Çizgi Kaydırma Paneli + Zoom Özelliği
