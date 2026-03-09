@@ -20,6 +20,7 @@ const state = {
     xCalPoints: { x1: null, x2: null },
     xCalibrated: false,
     pixelsPerMmX: null,
+    imageNaturalWidth: null, // Görüntünün gerçek genişliği (slider max için)
     // Measurement
     lastMeasurementTable: null,
     lastSummary: null,
@@ -27,6 +28,17 @@ const state = {
         min_section_width_px: 20, gradient_threshold: 2.0,
         blur_ksize: 5, morph_ksize: 5, min_contour_area: 5000,
     },
+    // Zoom & Pan
+    zoom: {
+        level: 1.0,
+        minLevel: 0.25,
+        maxLevel: 4.0,
+        panX: 0,
+        panY: 0,
+        isDragging: false,
+        startX: 0,
+        startY: 0
+    }
 };
 
 const DOM = {};
@@ -99,6 +111,17 @@ function cacheDom() {
     // X-kalibrasyon canvas overlay'leri
     DOM.originalXCalCanvas = document.getElementById('original-xcal-canvas');
     DOM.processedXCalCanvas = document.getElementById('processed-xcal-canvas');
+    // X-kalibrasyon slider
+    DOM.calXSliderPanel = document.getElementById('cal-x-slider-panel');
+    DOM.calX1Slider = document.getElementById('cal-x1-slider');
+    DOM.calX2Slider = document.getElementById('cal-x2-slider');
+    DOM.calX1Input = document.getElementById('cal-x1-input');
+    DOM.calX2Input = document.getElementById('cal-x2-input');
+    // Zoom kontrolleri
+    DOM.btnZoomIn = document.getElementById('btn-zoom-in');
+    DOM.btnZoomOut = document.getElementById('btn-zoom-out');
+    DOM.btnZoomFit = document.getElementById('btn-zoom-fit');
+    DOM.zoomLevel = document.getElementById('zoom-level');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -542,6 +565,10 @@ function handleXCalClick(clickX) {
         DOM.calXStep2.classList.add('active');
         DOM.calXHintText.textContent = 'Şimdi sağ kenara tıklayın (2. nokta).';
 
+        // Slider panelini göster ve güncelle
+        showXSliderPanel();
+        updateXSliderValues();
+
         drawXCalMarkers();
         showToast(`Sol kenar (X1): x=${clickX} px`, 'info');
     } else if (state.xCalState === 'second_click') {
@@ -556,6 +583,9 @@ function handleXCalClick(clickX) {
         DOM.calXStep2.classList.add('done');
         DOM.btnCalibrateX.disabled = false;
         DOM.calXHintText.textContent = 'İki nokta seçildi. Gerçek uzunluğu girin ve kalibre edin.';
+
+        // Slider değerlerini güncelle
+        updateXSliderValues();
 
         drawXCalMarkers();
         setXCalActiveStyle(false); // 2. nokta alındı, tıklama modu kapandı
@@ -624,6 +654,12 @@ function resetXCalibration() {
     DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
     clearXCalCanvas();
     setXCalActiveStyle(true); // Yeniden tıklama moduna gir
+    // Slider panelini gizle ve sıfırla
+    if (DOM.calXSliderPanel) {
+        DOM.calXSliderPanel.classList.add('hidden');
+    }
+    DOM.calX1Input.value = '';
+    DOM.calX2Input.value = '';
 }
 
 // ─── X-Kalibrasyon Canvas Overlay ────────────────────────────────────────────
@@ -955,6 +991,182 @@ function setupEvents() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Zoom & Pan
+// ═══════════════════════════════════════════════════════════════
+function setupZoom() {
+    const wrappers = document.querySelectorAll('.image-canvas-wrapper');
+    
+    wrappers.forEach(wrapper => {
+        // Mouse wheel zoom
+        wrapper.addEventListener('wheel', (e) => {
+            if (!state.imageId) return;
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            adjustZoom(delta);
+        });
+        
+        // Pan/drag başlat
+        wrapper.addEventListener('mousedown', (e) => {
+            if (state.zoom.level > 1.0) {
+                state.zoom.isDragging = true;
+                state.zoom.startX = e.clientX - state.zoom.panX;
+                state.zoom.startY = e.clientY - state.zoom.panY;
+                wrapper.classList.add('dragging');
+                e.preventDefault();
+            }
+        });
+    });
+    
+    // Global mouse move (pan)
+    document.addEventListener('mousemove', (e) => {
+        if (state.zoom.isDragging) {
+            state.zoom.panX = e.clientX - state.zoom.startX;
+            state.zoom.panY = e.clientY - state.zoom.startY;
+            applyZoomTransform();
+        }
+    });
+    
+    // Global mouse up (pan bitir)
+    document.addEventListener('mouseup', () => {
+        if (state.zoom.isDragging) {
+            state.zoom.isDragging = false;
+            document.querySelectorAll('.image-canvas-wrapper').forEach(w => {
+                w.classList.remove('dragging');
+            });
+        }
+    });
+    
+    // Zoom butonları
+    DOM.btnZoomIn.addEventListener('click', () => adjustZoom(0.25));
+    DOM.btnZoomOut.addEventListener('click', () => adjustZoom(-0.25));
+    DOM.btnZoomFit.addEventListener('click', resetZoom);
+}
+
+function adjustZoom(delta) {
+    const newLevel = Math.max(state.zoom.minLevel,
+                              Math.min(state.zoom.maxLevel, state.zoom.level + delta));
+    state.zoom.level = newLevel;
+    DOM.zoomLevel.textContent = `${Math.round(newLevel * 100)}%`;
+    
+    // Zoom %100'ün altındayken pan'i sıfırla
+    if (newLevel <= 1.0) {
+        state.zoom.panX = 0;
+        state.zoom.panY = 0;
+    }
+    
+    applyZoomTransform();
+}
+
+function resetZoom() {
+    state.zoom.level = 1.0;
+    state.zoom.panX = 0;
+    state.zoom.panY = 0;
+    DOM.zoomLevel.textContent = '100%';
+    applyZoomTransform();
+}
+
+function applyZoomTransform() {
+    const wrappers = document.querySelectorAll('.image-canvas-wrapper');
+    wrappers.forEach(wrapper => {
+        const img = wrapper.querySelector('img');
+        const canvas = wrapper.querySelector('canvas');
+        [img, canvas].forEach(el => {
+            if (el) {
+                el.style.transform = `scale(${state.zoom.level}) translate(${state.zoom.panX / state.zoom.level}px, ${state.zoom.panY / state.zoom.level}px)`;
+            }
+        });
+    });
+    
+    // Zoom durumuna göre cursor'ı güncelle
+    wrappers.forEach(wrapper => {
+        wrapper.classList.toggle('zooming', state.zoom.level > 1.0);
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// X-Calibration Slider
+// ═══════════════════════════════════════════════════════════════
+function setupXCalSliders() {
+    // X1 Slider
+    DOM.calX1Slider.addEventListener('input', (e) => {
+        const newX1 = parseInt(e.target.value);
+        setX1Value(newX1);
+    });
+    
+    // X1 Input (manuel giriş)
+    DOM.calX1Input.addEventListener('change', (e) => {
+        const newX1 = parseInt(e.target.value) || 0;
+        setX1Value(newX1);
+    });
+    
+    // X2 Slider
+    DOM.calX2Slider.addEventListener('input', (e) => {
+        const newX2 = parseInt(e.target.value);
+        setX2Value(newX2);
+    });
+    
+    // X2 Input (manuel giriş)
+    DOM.calX2Input.addEventListener('change', (e) => {
+        const newX2 = parseInt(e.target.value) || 0;
+        setX2Value(newX2);
+    });
+}
+
+function setX1Value(value) {
+    state.xCalPoints.x1 = value;
+    DOM.calX1Slider.value = value;
+    DOM.calX1Input.value = value;
+    DOM.calX1.textContent = `${value} px`;
+    updateXCalDistance();
+    drawXCalMarkers();
+}
+
+function setX2Value(value) {
+    state.xCalPoints.x2 = value;
+    DOM.calX2Slider.value = value;
+    DOM.calX2Input.value = value;
+    DOM.calX2.textContent = `${value} px`;
+    updateXCalDistance();
+    drawXCalMarkers();
+}
+
+function updateXSliderRange() {
+    const img = state.processedImageId ? DOM.processedImage : DOM.originalImage;
+    if (!img || !img.naturalWidth) return;
+    
+    const maxVal = img.naturalWidth;
+    state.imageNaturalWidth = maxVal;
+    DOM.calX1Slider.max = maxVal;
+    DOM.calX2Slider.max = maxVal;
+    DOM.calX1Input.max = maxVal;
+    DOM.calX2Input.max = maxVal;
+}
+
+function showXSliderPanel() {
+    if (!DOM.calXSliderPanel) return;
+    DOM.calXSliderPanel.classList.remove('hidden');
+    updateXSliderRange();
+}
+
+function updateXSliderValues() {
+    if (state.xCalPoints.x1 !== null) {
+        DOM.calX1Slider.value = state.xCalPoints.x1;
+        DOM.calX1Input.value = state.xCalPoints.x1;
+    }
+    if (state.xCalPoints.x2 !== null) {
+        DOM.calX2Slider.value = state.xCalPoints.x2;
+        DOM.calX2Input.value = state.xCalPoints.x2;
+    }
+}
+
+function updateXCalDistance() {
+    if (state.xCalPoints.x1 !== null && state.xCalPoints.x2 !== null) {
+        const dist = Math.abs(state.xCalPoints.x2 - state.xCalPoints.x1);
+        DOM.calXDist.textContent = `${dist} px`;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════
 async function init() {
@@ -964,16 +1176,24 @@ async function init() {
     setupCalibration();
     setupMeasurement();
     setupEvents();
+    setupZoom();
+    setupXCalSliders();
 
     // Resim yüklenince canvas boyutunu eşitle ve X işaretlerini yeniden çiz
     [DOM.originalImage, DOM.processedImage].forEach(img => {
         img.addEventListener('load', () => {
-            if (state.xCalPoints.x1 !== null) drawXCalMarkers();
+            // Sadece kalibrasyon sekmesindeyse X işaretlerini çiz
+            const calTab = document.getElementById('tab-calibration');
+            const isCalTabActive = calTab && calTab.classList.contains('active');
+            if (state.xCalPoints.x1 !== null && isCalTabActive) drawXCalMarkers();
+            updateXSliderRange();
         });
     });
-    // Pencere resize'ında da yeniden çiz
+    // Pencere resize'ında da yeniden çiz (sadece kalibrasyon sekmesindeyse)
     window.addEventListener('resize', () => {
-        if (state.xCalPoints.x1 !== null) drawXCalMarkers();
+        const calTab = document.getElementById('tab-calibration');
+        const isCalTabActive = calTab && calTab.classList.contains('active');
+        if (state.xCalPoints.x1 !== null && isCalTabActive) drawXCalMarkers();
     });
 
     try {

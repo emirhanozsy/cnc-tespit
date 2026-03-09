@@ -4,6 +4,30 @@
 
 ---
 
+## [v4.11] — 2026-03-09
+
+### X-Ekseni Kalibrasyon Çizgi Kaydırma Paneli + Zoom Özelliği
+
+- **Yeni Özellik 1: X-Ekseni Kalibrasyon Çizgi Kaydırma**
+  - X-ekseni kalibrasyonunda tıklama ile belirlenen X1 ve X2 çizgileri artık slider ile kaydırılabilir.
+  - "Çizgi Ayarlama" paneli, iki nokta seçildikten sonra otomatik olarak görünür.
+  - Slider maksimum değeri, görüntünün gerçek genişliğine göre otomatik ayarlanır.
+  - Slider step=1 olarak ayarlandı (her piksel için hassas ayar).
+  - Slider yanına manuel giriş için sayısal input kutusu eklendi.
+  - Slider ve input arasında çift yönlü senkronizasyon.
+
+- **Yeni Özellik 2: Görsele Yakınlaşma (Zoom)**
+  - Toolbar'a zoom kontrolleri eklendi: [−] %100 [+] [📐]
+  - Mouse wheel ile görüntüye zoom in/out yapılabilir (%25 - %400 arası).
+  - Zoom > %100 iken görüntü pan/drag ile kaydırılabilir.
+  - "Ekrana Sığdır" butonu ile %100'e hızlıca dönülür.
+
+- **İyileştirme: Ölçüm Ekranında Çizgi Gizleme**
+  - X kalibrasyon çizgileri artık sadece Kalibrasyon sekmesinde görünür.
+  - Ölçüm ve Algoritmalar sekmelerinde X kalibrasyon çizgileri gizlenir.
+
+---
+
 ## [v4.10] — 2026-03-09
 
 ### scipy Eksikliği + X Kalibrasyon Görsel Geri Bildirim

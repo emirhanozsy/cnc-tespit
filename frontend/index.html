@@ -208,6 +208,20 @@
                                         <span class="cal-point-value cal-highlight" id="cal-x-dist">— px</span>
                                     </div>
                                 </div>
+                                <!-- Çizgi Kaydırma Paneli -->
+                                <div class="cal-x-slider-panel hidden" id="cal-x-slider-panel">
+                                    <div class="cal-x-slider-header">Çizgi Ayarlama</div>
+                                    <div class="cal-x-slider-row">
+                                        <label class="cal-x-slider-label">X1:</label>
+                                        <input type="range" class="cal-x-slider" id="cal-x1-slider" min="0" max="1000" value="0" step="1">
+                                        <input type="number" class="cal-x-input" id="cal-x1-input" min="0" placeholder="px">
+                                    </div>
+                                    <div class="cal-x-slider-row">
+                                        <label class="cal-x-slider-label">X2:</label>
+                                        <input type="range" class="cal-x-slider" id="cal-x2-slider" min="0" max="1000" value="0" step="1">
+                                        <input type="number" class="cal-x-input" id="cal-x2-input" min="0" placeholder="px">
+                                    </div>
+                                </div>
                                 <div class="param-group">
                                     <label class="param-label">Gerçek Uzunluk (mm)</label>
                                     <input type="number" class="param-input" id="cal-x-reference-mm"
@@ -278,6 +292,12 @@
                         <div class="active-algo-title" id="active-algo-title">Algoritma seçin</div>
                     </div>
                     <div class="toolbar-right">
+                        <div class="zoom-controls">
+                            <button class="zoom-btn" id="btn-zoom-out" title="Uzaklaştır">−</button>
+                            <span class="zoom-level" id="zoom-level">100%</span>
+                            <button class="zoom-btn" id="btn-zoom-in" title="Yakınlaştır">+</button>
+                            <button class="zoom-btn" id="btn-zoom-fit" title="Ekrana Sığdır">📐</button>
+                        </div>
                         <div class="view-toggle">
                             <button class="active" data-view="split" id="btn-split">Yan Yana</button>
                             <button data-view="single" id="btn-single">Tek Görünüm</button>
