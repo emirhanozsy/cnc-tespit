@@ -281,7 +281,7 @@ function resetOverlays(activeTabId) {
     } else if (activeTabId === 'tab-calibration') {
         DOM.activeAlgoTitle.innerHTML = 'Kalibrasyon <span class="algo-badge">hazır</span>';
         resetEdgeDisplay(); // Kalibrasyon panelindeki eski tıklama değerlerini sil
-    } else if (activeTabId === 'tab-measurement') {
+    } else if (activeTabId === 'tab-measure') {
         DOM.activeAlgoTitle.innerHTML = 'Ölçüm <span class="algo-badge">bekliyor</span>';
     }
 }
@@ -365,6 +365,7 @@ async function handleFile(file) {
     if (file.size > 50 * 1024 * 1024) { showToast('Dosya 50MB\'dan büyük', 'error'); return; }
     showLoading(true);
     try {
+        const hadCalibration = state.calibrated || state.xCalibrated;
         const r = await API.uploadImage(file);
         state.imageId = r.image_id; state.imageUrl = r.url; state.imageName = r.filename;
         state.processedImageId = null; // Yeni görsel yüklenince sıfırla
@@ -380,8 +381,12 @@ async function handleFile(file) {
         state.detectedEdges = null;
         resetEdgeDisplay();
         clearXCalCanvas();
+        resetCalibrationForNewImage();
         updateCalibrationHint();
         showToast(`${r.filename} yüklendi`, 'success');
+        if (hadCalibration) {
+            showToast('Yeni görsel yüklendiği için kalibrasyon sıfırlandı. Lütfen yeniden kalibre edin.', 'warning');
+        }
         if (state.selectedAlgorithm) await applyAlgorithm();
     } catch (err) { showToast(err.message, 'error'); }
     finally { showLoading(false); }
@@ -499,8 +504,8 @@ async function handleAutoEdgeClick(e) {
     const rect = refImg.getBoundingClientRect();
     const scaleX = refImg.naturalWidth / rect.width;
     const scaleY = refImg.naturalHeight / rect.height;
-    const clickX = Math.round((e.clientX - rect.left) * scaleX);
-    const clickY = Math.round((e.clientY - rect.top) * scaleY);
+    const clickX = clampXCoord(Math.round((e.clientX - rect.left) * scaleX));
+    const clickY = Math.max(0, Math.min(refImg.naturalHeight - 1, Math.round((e.clientY - rect.top) * scaleY)));
 
     // X-Ekseni kalibrasyon modu (uzunluk) — sadece X koordinatı alınır
     if (state.xCalState !== 'idle') {
@@ -513,7 +518,7 @@ async function handleAutoEdgeClick(e) {
 
     // Hangi image_id kullanılacak:
     // Algoritma uygulanmışsa işlenmiş görselin ID'si, aksi halde orijinal
-    const calImageId = state.processedImageId || state.imageId;
+    const calImageId = (isProcessedClick && state.processedImageId) ? state.processedImageId : state.imageId;
 
     showLoading(true);
     try {
@@ -550,13 +555,14 @@ function setXCalActiveStyle(active) {
 }
 
 function handleXCalClick(clickX) {
+    const safeX = clampXCoord(clickX);
     if (state.xCalState === 'first_click') {
         // 1. nokta alındı
-        state.xCalPoints.x1 = clickX;
+        state.xCalPoints.x1 = safeX;
         state.xCalPoints.x2 = null;
         state.xCalState = 'second_click';
 
-        DOM.calX1.textContent = `${clickX} px`;
+        DOM.calX1.textContent = `${safeX} px`;
         DOM.calX2.textContent = '—';
         DOM.calXDist.textContent = '— px';
         DOM.btnCalibrateX.disabled = true;
@@ -570,14 +576,14 @@ function handleXCalClick(clickX) {
         updateXSliderValues();
 
         drawXCalMarkers();
-        showToast(`Sol kenar (X1): x=${clickX} px`, 'info');
+        showToast(`Sol kenar (X1): x=${safeX} px`, 'info');
     } else if (state.xCalState === 'second_click') {
         // 2. nokta alındı
-        state.xCalPoints.x2 = clickX;
+        state.xCalPoints.x2 = safeX;
         state.xCalState = 'idle'; // Tıklama modunu kapat
 
-        const dist = Math.abs(clickX - state.xCalPoints.x1);
-        DOM.calX2.textContent = `${clickX} px`;
+        const dist = Math.abs(safeX - state.xCalPoints.x1);
+        DOM.calX2.textContent = `${safeX} px`;
         DOM.calXDist.textContent = `${dist} px`;
 
         DOM.calXStep2.classList.add('done');
@@ -589,7 +595,7 @@ function handleXCalClick(clickX) {
 
         drawXCalMarkers();
         setXCalActiveStyle(false); // 2. nokta alındı, tıklama modu kapandı
-        showToast(`Sağ kenar (X2): x=${clickX} px | Mesafe: ${dist} px`, 'success');
+        showToast(`Sağ kenar (X2): x=${safeX} px | Mesafe: ${dist} px`, 'success');
     }
 }
 
@@ -598,6 +604,40 @@ function resetEdgeDisplay() {
     DOM.calBottomEdge.textContent = '—';
     DOM.calDistance.textContent = '— px';
     DOM.btnCalibrate.disabled = true;
+}
+
+function resetCalibrationForNewImage() {
+    state.calibrated = false;
+    state.pixelsPerMm = 1.0;
+    state.detectedEdges = null;
+    state.xCalibrated = false;
+    state.pixelsPerMmX = null;
+    state.xCalState = 'idle';
+    state.xCalPoints = { x1: null, x2: null };
+    state.imageNaturalWidth = null;
+
+    resetEdgeDisplay();
+    DOM.calResult.classList.add('hidden');
+    DOM.calXResult.classList.add('hidden');
+    DOM.calXSection.classList.add('hidden');
+    DOM.calResultPpmm.textContent = '—';
+    DOM.calResultPpmmX.textContent = 'henüz kalibre edilmedi';
+    DOM.calResultPx.textContent = '— px';
+    DOM.calXResultPpmm.textContent = '—';
+    DOM.calX1.textContent = '—';
+    DOM.calX2.textContent = '—';
+    DOM.calXDist.textContent = '— px';
+    DOM.calibrationBadge.classList.remove('visible', 'calibrated');
+    DOM.calibrationStatus.textContent = 'Kalibrasyon yok';
+    if (DOM.calXSliderPanel) DOM.calXSliderPanel.classList.add('hidden');
+    DOM.calX1Input.value = '';
+    DOM.calX2Input.value = '';
+    DOM.btnCalibrateX.disabled = true;
+    DOM.calXStep1.classList.remove('done', 'active');
+    DOM.calXStep2.classList.remove('done', 'active');
+    DOM.calXStep1.classList.add('active');
+    DOM.calXHintText.textContent = 'Bilinen uzunluktaki bir bölümün sol kenarına tıklayın (1. nokta).';
+    setXCalActiveStyle(false);
 }
 
 function setCalibrationResult(ppmm) {
@@ -1113,19 +1153,21 @@ function setupXCalSliders() {
 }
 
 function setX1Value(value) {
-    state.xCalPoints.x1 = value;
-    DOM.calX1Slider.value = value;
-    DOM.calX1Input.value = value;
-    DOM.calX1.textContent = `${value} px`;
+    const safeValue = clampXCoord(value);
+    state.xCalPoints.x1 = safeValue;
+    DOM.calX1Slider.value = safeValue;
+    DOM.calX1Input.value = safeValue;
+    DOM.calX1.textContent = `${safeValue} px`;
     updateXCalDistance();
     drawXCalMarkers();
 }
 
 function setX2Value(value) {
-    state.xCalPoints.x2 = value;
-    DOM.calX2Slider.value = value;
-    DOM.calX2Input.value = value;
-    DOM.calX2.textContent = `${value} px`;
+    const safeValue = clampXCoord(value);
+    state.xCalPoints.x2 = safeValue;
+    DOM.calX2Slider.value = safeValue;
+    DOM.calX2Input.value = safeValue;
+    DOM.calX2.textContent = `${safeValue} px`;
     updateXCalDistance();
     drawXCalMarkers();
 }
@@ -1134,7 +1176,7 @@ function updateXSliderRange() {
     const img = state.processedImageId ? DOM.processedImage : DOM.originalImage;
     if (!img || !img.naturalWidth) return;
     
-    const maxVal = img.naturalWidth;
+    const maxVal = Math.max(0, img.naturalWidth - 1);
     state.imageNaturalWidth = maxVal;
     DOM.calX1Slider.max = maxVal;
     DOM.calX2Slider.max = maxVal;
@@ -1164,6 +1206,22 @@ function updateXCalDistance() {
         const dist = Math.abs(state.xCalPoints.x2 - state.xCalPoints.x1);
         DOM.calXDist.textContent = `${dist} px`;
     }
+}
+
+function clampXCoord(value) {
+    const maxVal = getXCoordUpperBound();
+    const numeric = Number.isFinite(value) ? Math.round(value) : 0;
+    return Math.max(0, Math.min(maxVal, numeric));
+}
+
+function getXCoordUpperBound() {
+    if (Number.isFinite(state.imageNaturalWidth) && state.imageNaturalWidth >= 0) {
+        return state.imageNaturalWidth;
+    }
+
+    const img = state.processedImageId ? DOM.processedImage : DOM.originalImage;
+    if (!img || !img.naturalWidth) return 0;
+    return Math.max(0, img.naturalWidth - 1);
 }
 
 // ═══════════════════════════════════════════════════════════════

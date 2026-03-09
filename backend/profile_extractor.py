@@ -88,7 +88,18 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    # 4. Kontur bul — en büyüğü = parça
+        # Parlak/yansımalı yüzeylerde Otsu maskesi üst gövdeyi kaçırabildiği için
+        # kenar destek haritası üret: kolon bazında maske çapı bariz kısa kalırsa
+        # bu harita ile üst/alt kenarı düzelt.
+        edge_blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        edge_support = cv2.Canny(edge_blur, 40, 120)
+        edge_support = cv2.dilate(
+            edge_support,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+            iterations=1
+        )
+
+    # 4. Kontur bul
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         raise ValueError("Parça konturu bulunamadı. Görüntü kalitesini kontrol edin.")
@@ -98,17 +109,26 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     if not valid_contours:
         raise ValueError(f"Yeterince büyük kontur bulunamadı (min alan: {min_contour_area} px²)")
 
+    # Parlak yüzeyli metal parçalarda gövde bazen birden çok kontura ayrılabiliyor.
+    # Sadece en büyük konturu almak "yarım profil" hatasına yol açtığı için
+    # geçerli tüm konturları birleştirip tek maske üzerinde profil çıkarıyoruz.
     main_contour = max(valid_contours, key=cv2.contourArea)
-
-    # 5. Konturdan maske oluştur
     mask = np.zeros(gray.shape, dtype=np.uint8)
-    cv2.drawContours(mask, [main_contour], -1, 255, cv2.FILLED)
+    cv2.drawContours(mask, valid_contours, -1, 255, cv2.FILLED)
 
-    # 6. Her x için üst/alt kenar bul
-    h, w = mask.shape
-    bbox = cv2.boundingRect(main_contour)
-    x_start, y_start, bbox_w, bbox_h = bbox
-    x_end = x_start + bbox_w
+    # Birleşik maskeden bbox hesapla
+    cols_with_data = np.where(np.any(mask > 0, axis=0))[0]
+    rows_with_data = np.where(np.any(mask > 0, axis=1))[0]
+    if len(cols_with_data) == 0 or len(rows_with_data) == 0:
+        raise ValueError("Parça maskesi oluşturulamadı. Görüntü kalitesini kontrol edin.")
+
+    x_start = int(cols_with_data[0])
+    x_end = int(cols_with_data[-1]) + 1  # python range için exclusive üst sınır
+    y_start = int(rows_with_data[0])
+    y_end = int(rows_with_data[-1]) + 1
+    bbox_w = x_end - x_start
+    bbox_h = y_end - y_start
+    bbox = (x_start, y_start, bbox_w, bbox_h)
 
     top_edge = []
     bottom_edge = []
@@ -116,14 +136,20 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     center_y_list = []
 
     for x in range(x_start, x_end):
-        # Eğer Edge Map (Canny vb) modundaysak, morfoloji uygulanmış şişik maskeyi değil,
-        # orijinal keskin çizgileri barındıran binary_edges'i veya orijinal maskeyi kullan.
+        # Kritik: Çapı kalibrasyonla aynı mantıkla ölç.
+        # Kalibrasyonda bir kolondaki ilk/son beyaz piksel alınıyor.
+        # Ölçümde de aynı yaklaşımı kullanıyoruz; kontur maskesi yalnızca x aralığını
+        # belirlemek için kullanılıyor.
         if is_edge_map and 'binary_edges' in locals():
             col = binary_edges[:, x]
         else:
-            col = mask[:, x]
-            
+            col = binary[:, x]
+
         white_pixels = np.where(col > 0)[0]
+
+        # Kaynak kolonda veri yoksa birleşik kontur maskesine fallback.
+        if len(white_pixels) == 0:
+            white_pixels = np.where(mask[:, x] > 0)[0]
 
         if len(white_pixels) == 0:
             top_edge.append(None)
