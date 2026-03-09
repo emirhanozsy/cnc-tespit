@@ -37,8 +37,7 @@ class CalibrationProfile:
         # X-ekseni (yatay/uzunluk) oranı
         if pixels_per_mm_x is not None:
             self.pixels_per_mm_x = pixels_per_mm_x
-            # Eğer x_user_calibrated açıkça belirtilmemişse, değer verilmişse True say
-            self._x_user_calibrated = x_user_calibrated or True
+            self._x_user_calibrated = bool(x_user_calibrated)
         else:
             # Fallback: ASPECT_CORRECTION_FACTOR kullan — kullanıcı henüz kalibre etmedi
             self.pixels_per_mm_x = self.pixels_per_mm_y / ASPECT_CORRECTION_FACTOR
@@ -102,10 +101,12 @@ class CalibrationProfile:
     def from_dict(cls, data: dict) -> "CalibrationProfile":
         ppmm = data.get("pixels_per_mm", 1.0)
         ppmm_x = data.get("pixels_per_mm_x", None)
-        x_user_cal = data.get("x_user_calibrated", False)
-        # Eski profil dosyasında x_user_calibrated yoksa: ppmm_x varsa True say
-        if ppmm_x is not None and not x_user_cal:
-            x_user_cal = data.get("x_user_calibrated", True)
+        has_explicit_x_flag = "x_user_calibrated" in data
+        # Geriye uyumluluk: eski profilde x flag yoksa ppmm_x varlığına göre çıkarım yap.
+        if has_explicit_x_flag:
+            x_user_cal = bool(data.get("x_user_calibrated", False))
+        else:
+            x_user_cal = ppmm_x is not None
         return cls(
             pixels_per_mm=ppmm,
             reference_diameter_mm=data.get("reference_diameter_mm", 0.0),

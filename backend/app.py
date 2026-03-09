@@ -8,7 +8,7 @@ import os
 import uuid
 import base64
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import cv2
 import numpy as np
@@ -16,7 +16,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from image_processing import get_algorithm_list, apply_algorithm
 from calibration import (
@@ -64,6 +64,8 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Aktif kalibrasyon (session bazlı — bellekte tutulur)
 active_calibration: CalibrationProfile = CalibrationProfile(pixels_per_mm=1.0, name="default")
+# image_id bazlı kalibrasyon bağlama (global tek profil riskini azaltır)
+active_calibration_by_image: Dict[str, CalibrationProfile] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +74,11 @@ active_calibration: CalibrationProfile = CalibrationProfile(pixels_per_mm=1.0, n
 class ProcessRequest(BaseModel):
     image_id: str
     algorithm: str
-    params: dict = {}
+    params: dict = Field(default_factory=dict)
 
 
 class CalibrateRequest(BaseModel):
+    image_id: Optional[str] = None
     reference_mm: float
     x1: float
     y1: float
@@ -94,6 +97,7 @@ class MeasureRequest(BaseModel):
 
 
 class ManualCalibrationRequest(BaseModel):
+    image_id: Optional[str] = None
     pixels_per_mm: float
     profile_name: Optional[str] = None
 
@@ -107,6 +111,7 @@ class EdgeDetectRequest(BaseModel):
 
 
 class XCalibrateRequest(BaseModel):
+    image_id: Optional[str] = None
     reference_length_mm: float
     x1: float
     x2: float
@@ -142,6 +147,21 @@ def _load_image(image_id: str) -> np.ndarray:
 def _image_to_base64(image: np.ndarray) -> str:
     _, buffer = cv2.imencode(".png", image)
     return base64.b64encode(buffer).decode("utf-8")
+
+
+def _set_active_calibration(profile: CalibrationProfile, image_id: Optional[str] = None):
+    """Kalibrasyonu global + varsa image_id bazlı kaydet."""
+    global active_calibration
+    active_calibration = profile
+    if image_id:
+        active_calibration_by_image[Path(image_id).name] = profile
+
+
+def _get_active_calibration(image_id: Optional[str] = None) -> CalibrationProfile:
+    """Varsa image_id'ye bağlı kalibrasyonu, yoksa global aktif kalibrasyonu döndür."""
+    if image_id:
+        return active_calibration_by_image.get(Path(image_id).name, active_calibration)
+    return active_calibration
 
 
 # ---------------------------------------------------------------------------
@@ -358,12 +378,11 @@ async def detect_edges(request: EdgeDetectRequest):
 @app.post("/api/calibrate")
 async def calibrate(request: CalibrateRequest):
     """İki nokta + bilinen ölçüden kalibrasyon hesapla."""
-    global active_calibration
     try:
         profile = calculate_calibration_from_line(
             request.reference_mm, request.x1, request.y1, request.x2, request.y2
         )
-        active_calibration = profile
+        _set_active_calibration(profile, request.image_id)
 
         if request.profile_name:
             profile.name = request.profile_name
@@ -382,28 +401,28 @@ async def calibrate(request: CalibrateRequest):
 @app.post("/api/calibrate/manual")
 async def calibrate_manual(request: ManualCalibrationRequest):
     """Manuel piksel/mm değerinden kalibrasyon."""
-    global active_calibration
     if request.pixels_per_mm <= 0:
         raise HTTPException(status_code=400, detail="Piksel/mm değeri sıfırdan büyük olmalı")
 
-    active_calibration = CalibrationProfile(
+    profile = CalibrationProfile(
         pixels_per_mm=request.pixels_per_mm,
         name=request.profile_name or "manual",
     )
+    _set_active_calibration(profile, request.image_id)
 
     if request.profile_name:
-        save_profile(active_calibration, request.profile_name)
+        save_profile(profile, request.profile_name)
 
     return {
-        "pixels_per_mm": active_calibration.pixels_per_mm,
+        "pixels_per_mm": profile.pixels_per_mm,
         "saved": request.profile_name is not None,
     }
 
 
 @app.get("/api/calibration/current")
-async def get_current_calibration():
+async def get_current_calibration(image_id: Optional[str] = None):
     """Aktif kalibrasyon durumunu döndür."""
-    return active_calibration.to_dict()
+    return _get_active_calibration(image_id).to_dict()
 
 
 @app.get("/api/calibration/profiles")
@@ -413,12 +432,12 @@ async def get_calibration_profiles():
 
 
 @app.post("/api/calibration/load/{profile_name}")
-async def load_calibration_profile(profile_name: str):
+async def load_calibration_profile(profile_name: str, image_id: Optional[str] = None):
     """Kaydedilmiş profili yükle."""
-    global active_calibration
     try:
-        active_calibration = load_profile(profile_name)
-        return active_calibration.to_dict()
+        profile = load_profile(profile_name)
+        _set_active_calibration(profile, image_id)
+        return profile.to_dict()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Profil bulunamadı: {profile_name}")
 
@@ -430,20 +449,21 @@ async def calibrate_x_axis(request: XCalibrateRequest):
     iki x koordinatından X-ekseni piksel/mm oranını hesapla.
     Mevcut Y-ekseni kalibrasyonu korunur.
     """
-    global active_calibration
     try:
+        profile = _get_active_calibration(request.image_id)
         ppmm_x = calculate_x_calibration(
             request.reference_length_mm, request.x1, request.x2
         )
-        active_calibration.set_x_calibration(ppmm_x)
+        profile.set_x_calibration(ppmm_x)
+        _set_active_calibration(profile, request.image_id)
 
         if request.profile_name:
-            active_calibration.name = request.profile_name
-            save_profile(active_calibration, request.profile_name)
+            profile.name = request.profile_name
+            save_profile(profile, request.profile_name)
 
         return {
             "pixels_per_mm_x": round(ppmm_x, 4),
-            "pixels_per_mm_y": round(active_calibration.pixels_per_mm_y, 4),
+            "pixels_per_mm_y": round(profile.pixels_per_mm_y, 4),
             "reference_length_mm": request.reference_length_mm,
             "pixel_distance": round(abs(request.x2 - request.x1), 2),
             "saved": request.profile_name is not None,
@@ -462,6 +482,7 @@ async def measure_part(request: MeasureRequest):
     Sonucu overlay görüntüsü ve ölçüm tablosu olarak döndür.
     """
     img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
 
     try:
         # 1. Profil çıkar
@@ -473,13 +494,13 @@ async def measure_part(request: MeasureRequest):
 
         # 2. Bölümleri tespit et
         sections = detect_sections(
-            profile, active_calibration,
+            profile, calibration,
             min_section_width_px=request.min_section_width_px,
             gradient_threshold=request.gradient_threshold,
         )
 
         # 3. Overlay çiz
-        overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm, sections)
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections)
 
         # 4. Ölçüm tablosu
         table = generate_measurement_table(sections)
@@ -490,8 +511,8 @@ async def measure_part(request: MeasureRequest):
             "sections": sections,
             "measurement_table": table,
             "summary": summary,
-            "calibration": active_calibration.to_dict(),
-            "x_calibrated": active_calibration.x_is_calibrated,
+            "calibration": calibration.to_dict(),
+            "x_calibrated": calibration.x_is_calibrated,
         }
 
     except ValueError as e:
@@ -504,6 +525,7 @@ async def measure_part(request: MeasureRequest):
 async def extract_part_profile(request: MeasureRequest):
     """Sadece profil çıkar (bölüm tespiti olmadan) — önizleme için."""
     img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
 
     try:
         profile = extract_profile(img, {
@@ -512,7 +534,7 @@ async def extract_part_profile(request: MeasureRequest):
             "min_contour_area": request.min_contour_area,
         })
 
-        overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm)
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm)
 
         # Çap profili verisini seyrelterek gönder (her 5 pikselde bir)
         step = max(1, len(profile["diameter_px"]) // 200)
@@ -538,6 +560,7 @@ async def extract_part_profile(request: MeasureRequest):
 @app.post("/api/report/pdf")
 async def download_pdf_report(request: ReportRequest):
     """PDF ölçüm raporu oluştur ve indir."""
+    calibration = _get_active_calibration(request.image_id)
     # Overlay görüntüsü oluştur (rapora eklemek için)
     overlay_path = None
     if request.include_image:
@@ -549,17 +572,17 @@ async def download_pdf_report(request: ReportRequest):
                 "min_contour_area": request.min_contour_area,
             })
             sections = detect_sections(
-                profile, active_calibration,
+                profile, calibration,
                 min_section_width_px=request.min_section_width_px,
                 gradient_threshold=request.gradient_threshold,
             )
-            overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm, sections)
+            overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections)
             overlay_path = str(REPORTS_DIR / f"overlay_{request.image_id}")
             cv2.imwrite(overlay_path, overlay)
         except Exception:
             overlay_path = None
 
-    cal_info = active_calibration.to_dict()
+    cal_info = calibration.to_dict()
     pdf_bytes = generate_pdf_report(
         measurement_table=request.measurement_table,
         summary=request.summary,
@@ -584,7 +607,7 @@ async def download_pdf_report(request: ReportRequest):
 @app.post("/api/report/excel")
 async def download_excel_report(request: ReportRequest):
     """Excel ölçüm raporu oluştur ve indir."""
-    cal_info = active_calibration.to_dict()
+    cal_info = _get_active_calibration(request.image_id).to_dict()
     excel_bytes = generate_excel_report(
         measurement_table=request.measurement_table,
         summary=request.summary,
@@ -605,6 +628,7 @@ async def download_excel_report(request: ReportRequest):
 async def download_processed_image(request: MeasureRequest):
     """İşlenmiş (ölçüm overlay) görüntüyü PNG olarak indir."""
     img = _load_image(request.image_id)
+    calibration = _get_active_calibration(request.image_id)
     try:
         profile = extract_profile(img, {
             "blur_ksize": request.blur_ksize,
@@ -612,11 +636,11 @@ async def download_processed_image(request: MeasureRequest):
             "min_contour_area": request.min_contour_area,
         })
         sections = detect_sections(
-            profile, active_calibration,
+            profile, calibration,
             min_section_width_px=request.min_section_width_px,
             gradient_threshold=request.gradient_threshold,
         )
-        overlay = draw_profile_overlay(img, profile, active_calibration.pixels_per_mm, sections)
+        overlay = draw_profile_overlay(img, profile, calibration.pixels_per_mm, sections)
 
         _, png_data = cv2.imencode(".png", overlay)
 
