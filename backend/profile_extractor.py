@@ -8,6 +8,41 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 
 
+def _subpixel_edge_1d(gray_col: np.ndarray, y: int, search_window: int = 3) -> float:
+    """1D gradyan tabanlı parabolik interpolasyon ile alt-piksel (sub-pixel) kenar tespiti."""
+    h = len(gray_col)
+    if y < search_window + 1 or y >= h - search_window - 2:
+        return float(y)
+    
+    # Arama penceresi içindeki gradyanları hesapla (mutlak değer)
+    grads = []
+    y_vals = range(y - search_window, y + search_window + 1)
+    for i in y_vals:
+        # Merkezi fark (Central difference)
+        g = abs(float(gray_col[i+1]) - float(gray_col[i-1]))
+        grads.append(g)
+        
+    max_idx = int(np.argmax(grads))
+    best_y = y_vals[max_idx]
+    
+    # Sınırlara çok yakınsa interpolasyon yapma
+    if max_idx == 0 or max_idx == len(grads) - 1:
+        return float(best_y)
+        
+    g_minus = grads[max_idx - 1]
+    g_zero = grads[max_idx]
+    g_plus = grads[max_idx + 1]
+    
+    denom = g_minus - 2 * g_zero + g_plus
+    if denom == 0:
+        return float(best_y)
+        
+    d = 0.5 * (g_minus - g_plus) / denom
+    d = max(-1.0, min(1.0, d))
+    
+    return float(best_y) + d
+
+
 def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
     """
     Görüntüdeki silindirik parçanın profilini çıkarır.
@@ -159,10 +194,15 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         else:
             top = int(white_pixels[0])
             bottom = int(white_pixels[-1])
-            top_edge.append(top)
-            bottom_edge.append(bottom)
-            diameter_px.append(bottom - top)
-            center_y_list.append((top + bottom) / 2.0)
+
+            # Alt-piksel hassasiyeti (Sub-pixel refinement)
+            top_sub = _subpixel_edge_1d(gray[:, x], top)
+            bottom_sub = _subpixel_edge_1d(gray[:, x], bottom)
+
+            top_edge.append(top_sub)
+            bottom_edge.append(bottom_sub)
+            diameter_px.append(bottom_sub - top_sub)
+            center_y_list.append((top_sub + bottom_sub) / 2.0)
 
     return {
         "top_edge": top_edge,
@@ -199,13 +239,13 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
     for i in range(len(top_edge) - 1):
         if top_edge[i] is not None and top_edge[i + 1] is not None:
             cv2.line(overlay,
-                     (x_start + i, top_edge[i]),
-                     (x_start + i + 1, top_edge[i + 1]),
+                     (x_start + i, int(top_edge[i])),
+                     (x_start + i + 1, int(top_edge[i + 1])),
                      (0, 255, 0), 1)
         if bottom_edge[i] is not None and bottom_edge[i + 1] is not None:
             cv2.line(overlay,
-                     (x_start + i, bottom_edge[i]),
-                     (x_start + i + 1, bottom_edge[i + 1]),
+                     (x_start + i, int(bottom_edge[i])),
+                     (x_start + i + 1, int(bottom_edge[i + 1])),
                      (0, 255, 0), 1)
 
     # Merkez çizgisi (mavi, kesikli)
@@ -228,16 +268,18 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
             top_y = sec.get("top_y_at_mid")
             bot_y = sec.get("bottom_y_at_mid")
             if top_y is not None and bot_y is not None:
-                cv2.line(overlay, (mid_x, top_y), (mid_x, bot_y), (0, 0, 255), 2)
+                ity = int(top_y)
+                iby = int(bot_y)
+                cv2.line(overlay, (mid_x, ity), (mid_x, iby), (0, 0, 255), 2)
                 # Çap ok uçları
-                cv2.arrowedLine(overlay, (mid_x, int((top_y + bot_y)/2)), (mid_x, top_y), (0, 0, 255), 2, tipLength=0.05)
-                cv2.arrowedLine(overlay, (mid_x, int((top_y + bot_y)/2)), (mid_x, bot_y), (0, 0, 255), 2, tipLength=0.05)
+                cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, ity), (0, 0, 255), 2, tipLength=0.05)
+                cv2.arrowedLine(overlay, (mid_x, int((ity + iby)/2)), (mid_x, iby), (0, 0, 255), 2, tipLength=0.05)
 
             # Çap etiketi
             diameter_mm = sec.get("diameter_mm", 0)
             label = f"D{diameter_mm:.2f}"
             label_x = mid_x + 8
-            label_y = top_y - 10 if top_y is not None else sec.get("center_y", 0)
+            label_y = int(top_y - 10) if top_y is not None else int(sec.get("center_y", 0))
             cv2.putText(overlay, label, (label_x, label_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1, cv2.LINE_AA)
 
@@ -245,7 +287,7 @@ def draw_profile_overlay(image: np.ndarray, profile: Dict, calibration_ppmm: flo
             length_mm = sec.get("length_mm", 0)
             if length_mm > 0:
                 length_label = f"L{length_mm:.2f}"
-                ly = bot_y + 20 if bot_y is not None else 0
+                ly = int(bot_y + 20) if bot_y is not None else 0
                 cv2.putText(overlay, length_label, (mid_x - 15, ly),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 255, 100), 1, cv2.LINE_AA)
 
