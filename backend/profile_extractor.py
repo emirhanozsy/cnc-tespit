@@ -83,13 +83,14 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
 
     if is_edge_map:
         # KENAR HARİTASI MODU (siyah zemin, beyaz çizgiler)
-        # ÖNEMLİ: Kalibrasyon (detect_edges) ile AYNI algoritmayı kullanıyoruz
+        # KRİTİK FIX: Kalibrasyon (detect_edges) ile AYNI algoritmayı kullanıyoruz
         # Böylece kalibrasyon ve ölçüm tutarlı sonuç verir
         
-        # 1. Kernel boyutu - kalibrasyonla aynı
+        # 1. Kernel boyutu - kalibrasyonla AYNI (morph_ksize + 2 YOK!)
         mk = morph_ksize if morph_ksize % 2 == 1 else morph_ksize + 1
         
-        # 2. Dilate kullan - kalibrasyonla AYNI (blur değil!)
+        # 2. Dilate kullan - kalibrasyonla AYNI (GaussianBlur DEĞİL!)
+        # app.py:437 ile tutarlı: cv2.dilate(gray, kernel, iterations=1)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
         binary_dilated = cv2.dilate(gray, kernel, iterations=1)
         _, binary_edges = cv2.threshold(binary_dilated, 20, 255, cv2.THRESH_BINARY)
@@ -108,6 +109,7 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
                     solid_mask[y1:y2+1, x] = 255
                     
         # 4. Morfolojik temizleme - kalibrasyonla tutarlı (daha az agresif)
+        # iterations=1 kullan (kalibrasyonda morfoloji yok)
         kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT, (mk, mk))
         binary = cv2.morphologyEx(solid_mask, cv2.MORPH_CLOSE, kernel2, iterations=1)
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel2, iterations=1)

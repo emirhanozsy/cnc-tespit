@@ -10,7 +10,7 @@ from calibration import CalibrationProfile
 
 def detect_sections(profile: Dict, calibration: CalibrationProfile,
                     min_section_width_px: int = 20,
-                    gradient_threshold: float = 2.0) -> List[Dict]:
+                    gradient_threshold: float = None) -> List[Dict]:
     """
     Çap profilindeki bölümleri (sabit çap bölgeleri) tespit eder.
 
@@ -24,7 +24,8 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
         profile: profile_extractor.extract_profile() çıktısı
         calibration: Kalibrasyon profili
         min_section_width_px: Minimum bölüm genişliği (piksel)
-        gradient_threshold: Bölüm geçiş eşiği (piksel/kolon)
+        gradient_threshold: Bölüm geçiş eşiği (piksel/kolon).
+                           None ise otomatik hesaplanır.
 
     Returns:
         Bölüm listesi (her biri dict)
@@ -46,6 +47,18 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
 
     # Türev hesapla
     gradient = np.gradient(diameter_smooth)
+    
+    # KRİTİK FIX: Dinamik gradient threshold hesaplama
+    if gradient_threshold is None:
+        # Çap değişiminin %3'ü veya gradyan standart sapmasının 2 katı
+        valid_diameters = diameter_smooth[diameter_smooth > 0]
+        if len(valid_diameters) > 0:
+            diameter_range = np.max(valid_diameters) - np.min(valid_diameters)
+            grad_std = np.std(gradient)
+            # Daha hassas threshold: çap değişiminin %2'si veya 2 sigma
+            gradient_threshold = max(1.0, min(diameter_range * 0.02, grad_std * 2))
+        else:
+            gradient_threshold = 2.0
 
     # Bölüm geçiş noktalarını bul
     transitions = []
@@ -59,13 +72,50 @@ def detect_sections(profile: Dict, calibration: CalibrationProfile,
 
     transitions.append(len(diameter_px))  # Bitiş
 
-    # Geçişleri temizle — çok yakın olanları birleştir
+    # KRİTİK FIX: Geçişleri temizle — çok yakın olanları birleştir
+    # Önceki mantık: clean_transitions[-1] = t (ileriyi al) - BU YANLIŞ!
+    # Yeni mantık: Yakın geçişleri ortalamasını al veya en güçlüsünü tut
     clean_transitions = [transitions[0]]
+    pending_transitions = []
+    
     for t in transitions[1:]:
+        if t == len(diameter_px):  # Bitiş noktası
+            if pending_transitions:
+                # Bekleyen geçişlerin ortalamasını al
+                avg_transition = int(np.mean(pending_transitions))
+                if avg_transition - clean_transitions[-1] >= min_section_width_px:
+                    clean_transitions.append(avg_transition)
+                else:
+                    # Çok yakınsa, en güçlü gradyanlı olanı seç
+                    best_t = max(pending_transitions,
+                                key=lambda x: abs(gradient[x]) if x < len(gradient) else 0)
+                    clean_transitions[-1] = best_t
+            clean_transitions.append(t)
+            break
+            
         if t - clean_transitions[-1] >= min_section_width_px:
+            if pending_transitions:
+                # Bekleyen geçişlerin ortalamasını al
+                avg_transition = int(np.mean(pending_transitions))
+                clean_transitions.append(avg_transition)
+                pending_transitions = []
             clean_transitions.append(t)
         else:
-            clean_transitions[-1] = t  # İleriyi al
+            # Yakın geçiş - bekle ve ortalama al
+            pending_transitions.append(t)
+    
+    # Eğer hala bekleyen varsa
+    if pending_transitions and clean_transitions[-1] != len(diameter_px):
+        avg_transition = int(np.mean(pending_transitions))
+        if avg_transition - clean_transitions[-1] >= min_section_width_px:
+            clean_transitions.append(avg_transition)
+        else:
+            # En güçlü gradyanlı olanı seç
+            best_t = max(pending_transitions,
+                        key=lambda x: abs(gradient[x]) if x < len(gradient) else 0)
+            if best_t > clean_transitions[-1]:
+                clean_transitions[-1] = best_t
+    
     if clean_transitions[-1] != len(diameter_px):
         clean_transitions.append(len(diameter_px))
 

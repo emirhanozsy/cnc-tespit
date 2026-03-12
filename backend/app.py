@@ -35,6 +35,58 @@ from measurement_engine import (
 from report_generator import generate_pdf_report, generate_excel_report
 
 # ---------------------------------------------------------------------------
+# Sub-pixel Kenar Tespiti Yardımcı Fonksiyonu
+# ---------------------------------------------------------------------------
+def _subpixel_edge_1d(intensity: np.ndarray, coarse: int, search_window: int = 3) -> float:
+    """
+    1D intensity profili üzerinde sub-pixel kenar konumu hesaplar.
+    Parabolik interpolasyon kullanarak piksel-merkezli konumdan daha hassas
+    bir konum belirler.
+    
+    Args:
+        intensity: 1D numpy array (örneğin, bir sütunun gri ton değerleri)
+        coarse: Piksel-merkezli kaba kenar konumu
+        search_window: Piksel cinsinden arama penceresi (varsayılan: 3)
+    
+    Returns:
+        Sub-pixel hassasiyetinde kenar konumu (float)
+    """
+    h = search_window
+    y_min = max(0, coarse - h)
+    y_max = min(len(intensity) - 1, coarse + h)
+    
+    if y_max - y_min < 2:
+        return float(coarse)
+    
+    y_range = np.arange(y_min, y_max + 1)
+    vals = intensity[y_range].astype(np.float32)
+    
+    # Gradient hesapla (merkezi fark)
+    grad = np.zeros_like(vals)
+    grad[1:-1] = vals[2:] - vals[:-2]
+    grad[0] = vals[1] - vals[0]
+    grad[-1] = vals[-1] - vals[-2]
+    
+    # En büyük mutlak gradyanı bul
+    max_idx = np.argmax(np.abs(grad))
+    
+    if max_idx == 0 or max_idx == len(grad) - 1:
+        return float(y_range[max_idx])
+    
+    # Parabolik interpolasyon
+    y0, y1, y2 = y_range[max_idx-1], y_range[max_idx], y_range[max_idx+1]
+    g0, g1, g2 = grad[max_idx-1], grad[max_idx], grad[max_idx+1]
+    
+    denom = g0 - 2*g1 + g2
+    if abs(denom) < 1e-6:
+        return float(y1)
+    
+    delta = (g0 - g2) / (2 * denom)
+    subpixel_pos = y1 + delta
+    
+    return float(subpixel_pos)
+
+# ---------------------------------------------------------------------------
 # Yollar
 # ---------------------------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -460,8 +512,13 @@ async def detect_edges(request: EdgeDetectRequest):
             )
 
         # En üstteki ve en alttaki beyaz piksel = üst ve alt kenar
-        top_y = int(white_pixels[0])
-        bottom_y = int(white_pixels[-1])
+        top_y_raw = int(white_pixels[0])
+        bottom_y_raw = int(white_pixels[-1])
+        
+        # KRİTİK FIX: Sub-pixel refinement ekle (profile_extractor ile tutarlı)
+        # Kenar haritası modunda da orijinal gray üzerinde sub-pixel hesaplama
+        top_y = _subpixel_edge_1d(gray[:, click_x], top_y_raw, search_window=3)
+        bottom_y = _subpixel_edge_1d(gray[:, click_x], bottom_y_raw, search_window=3)
 
     else:
         # ── Normal Görüntü Modu ──────────────────────────────────────────────
@@ -495,23 +552,32 @@ async def detect_edges(request: EdgeDetectRequest):
                 detail="Bu noktada parça kenarı tespit edilemedi. Farklı bir nokta deneyin."
             )
 
-        top_y = int(white_pixels[0])
-        bottom_y = int(white_pixels[-1])
+        top_y_raw = int(white_pixels[0])
+        bottom_y_raw = int(white_pixels[-1])
+        
+        # KRİTİK FIX: Sub-pixel refinement ekle (profile_extractor ile tutarlı)
+        top_y = _subpixel_edge_1d(gray[:, click_x], top_y_raw, search_window=3)
+        bottom_y = _subpixel_edge_1d(gray[:, click_x], bottom_y_raw, search_window=3)
 
     pixel_distance = bottom_y - top_y
 
     # Overlay görüntüsü oluştur — kenar çizgilerini göster
     overlay = img.copy()
+    # Çizim için integer koordinatlar (cv2.line int bekler)
+    top_y_int = int(round(top_y))
+    bottom_y_int = int(round(bottom_y))
+    mid_y_int = (top_y_int + bottom_y_int) // 2
+    
     # Dikey ölçüm çizgisi (kırmızı)
-    cv2.line(overlay, (click_x, top_y), (click_x, bottom_y), (0, 0, 255), 2)
+    cv2.line(overlay, (click_x, top_y_int), (click_x, bottom_y_int), (0, 0, 255), 2)
     # Üst/alt kenar işaretleri (yeşil yatay çizgi)
-    cv2.line(overlay, (click_x - 20, top_y), (click_x + 20, top_y), (0, 255, 0), 2)
-    cv2.line(overlay, (click_x - 20, bottom_y), (click_x + 20, bottom_y), (0, 255, 0), 2)
+    cv2.line(overlay, (click_x - 20, top_y_int), (click_x + 20, top_y_int), (0, 255, 0), 2)
+    cv2.line(overlay, (click_x - 20, bottom_y_int), (click_x + 20, bottom_y_int), (0, 255, 0), 2)
     # Ok uçları
-    cv2.arrowedLine(overlay, (click_x, (top_y + bottom_y) // 2), (click_x, top_y), (0, 0, 255), 2, tipLength=0.03)
-    cv2.arrowedLine(overlay, (click_x, (top_y + bottom_y) // 2), (click_x, bottom_y), (0, 0, 255), 2, tipLength=0.03)
+    cv2.arrowedLine(overlay, (click_x, mid_y_int), (click_x, top_y_int), (0, 0, 255), 2, tipLength=0.03)
+    cv2.arrowedLine(overlay, (click_x, mid_y_int), (click_x, bottom_y_int), (0, 0, 255), 2, tipLength=0.03)
     # Piksel mesafesi etiketi
-    cv2.putText(overlay, f"{pixel_distance} px", (click_x + 10, (top_y + bottom_y) // 2),
+    cv2.putText(overlay, f"{pixel_distance:.2f} px", (click_x + 10, mid_y_int),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2, cv2.LINE_AA)
 
     return {

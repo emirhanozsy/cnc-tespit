@@ -50,6 +50,8 @@ const state = {
         index: -1,       // Sürüklenen sınırın indeksi
         startScreenX: 0,
     },
+    // Space tuşu durumu (zoom/pan modu için)
+    spaceKeyPressed: false,
     // ROI
     roiActive: false,
     roi: null, // {x, y, width, height}
@@ -593,10 +595,15 @@ async function handleAutoEdgeClick(e) {
     const scaleX = refImg.naturalWidth / unzoomedWidth;
     const scaleY = refImg.naturalHeight / unzoomedHeight;
 
-    // Ekran koordinatından pan offset'ini çıkar ve zoom'a böl
-    // Bu bize zoom öncesi koordinat sistemindeki konumu verir
-    const adjustedX = (e.clientX - rect.left - panX) / zoomLevel;
-    const adjustedY = (e.clientY - rect.top - panY) / zoomLevel;
+    // Ekran koordinatını zoom öncesi koordinat sistemine dönüştür
+    // Önce tıklama noktasının görüntü içindeki relative konumunu bul
+    const relativeX = e.clientX - rect.left;
+    const relativeY = e.clientY - rect.top;
+    
+    // CSS transform: translate(panX/zoomLevel, panY/zoomLevel) şeklinde uygulanıyor
+    // Bu yüzden ekran koordinatından pan offset'ini çıkarıp zoom'a bölmeliyiz
+    const adjustedX = (relativeX - panX) / zoomLevel;
+    const adjustedY = (relativeY - panY) / zoomLevel;
 
     // Zoom öncesi koordinatı natural koordinata dönüştür
     const clickX = clampXCoord(Math.round(adjustedX * scaleX));
@@ -604,17 +611,25 @@ async function handleAutoEdgeClick(e) {
     const isCalTabActive = getActiveTabId() === 'tab-calibration';
     const clickImageId = (isProcessedClick && state.processedImageId) ? state.processedImageId : state.imageId;
 
-    // X-Ekseni kalibrasyon yalnızca kalibrasyon sekmesi + auto modunda aktif olmalı.
-    if (state.xCalState !== 'idle' &&
-        isCalTabActive &&
-        state.calMode === 'auto' &&
-        state.calibrated) {
+    // KRİTİK FIX: X-Ekseni kalibrasyon yalnızca kalibrasyon sekmesi + auto modunda aktif olmalı.
+    // Ölçüm sekmesindeyken veya başka sekmedeyken X kalibrasyonu devre dışı
+    const isCalModeAuto = state.calMode === 'auto';
+    
+    // X kalibrasyonu sadece kalibrasyon sekmesinde aktif
+    if (state.xCalState !== 'idle' && isCalTabActive && isCalModeAuto && state.calibrated) {
         handleXCalClick(clickX, clickImageId);
         return;
     }
+    
+    // FIX: Kalibrasyon sekmesi dışındayken X kalibrasyon state'ini sıfırla
+    if (!isCalTabActive && state.xCalState !== 'idle') {
+        state.xCalState = 'idle';
+        setXCalActiveStyle(false);
+    }
 
     // Y-Ekseni kalibrasyon modu (çap) — kenar tespiti yapılır
-    if (!state.isCalibrating || !isCalTabActive || state.calMode !== 'auto') return;
+    // Sadece kalibrasyon sekmesinde ve auto modda
+    if (!state.isCalibrating || !isCalTabActive || !isCalModeAuto) return;
 
     // Hangi image_id kullanılacak:
     // Algoritma uygulanmışsa işlenmiş görselin ID'si, aksi halde orijinal
@@ -1229,7 +1244,11 @@ function setupZoom() {
 
         // Pan/drag başlat
         wrapper.addEventListener('mousedown', (e) => {
-            if (state.zoom.level > 1.0) {
+            // Space tuşu basılıysa veya zoom > 1.0 ise sürükleme aktif
+            // Boundary modunda sürükleme için Space tuşu gerekli
+            const canDrag = state.zoom.level > 1.0 &&
+                (!state.boundaryMode || state.spaceKeyPressed);
+            if (canDrag) {
                 state.zoom.isDragging = true;
                 state.zoom.startX = e.clientX - state.zoom.panX;
                 state.zoom.startY = e.clientY - state.zoom.panY;
@@ -1425,9 +1444,15 @@ function screenToNaturalX(e, refImg) {
     // Natural koordinat sistemine dönüştürme oranı
     const scaleX = refImg.naturalWidth / unzoomedWidth;
 
-    // Ekran koordinatından pan offset'ini çıkar ve zoom'a böl
-    // Bu bize zoom öncesi koordinat sistemindeki konumu verir
-    const adjustedX = (e.clientX - rect.left - panX) / zoomLevel;
+    // Ekran koordinatını zoom öncesi koordinat sistemine dönüştür
+    // Önce tıklama noktasının görüntü içindeki relative konumunu bul
+    const relativeX = e.clientX - rect.left;
+    
+    // CSS transform: translate(panX/zoomLevel) şeklinde uygulanıyor
+    // Bu yüzden ekran koordinatından pan offset'ini çıkarıp zoom'a bölmeliyiz
+    // relativeX = (naturalX * scaleX * zoomLevel) + panX
+    // naturalX = (relativeX - panX) / (scaleX * zoomLevel)
+    const adjustedX = (relativeX - panX) / zoomLevel;
 
     // Zoom öncesi koordinatı natural koordinata dönüştür
     const raw = Math.round(adjustedX * scaleX);
@@ -1635,6 +1660,21 @@ function setupBoundaryMode() {
 
         canvas.addEventListener('mousedown', (e) => {
             if (!state.boundaryMode) return;
+            
+            // Space tuşu basılıysa zoom/pan modu aktif - boundary işlemlerini atla
+            // ve zoom sürüklemesini başlat
+            if (state.spaceKeyPressed && state.zoom.level > 1.0) {
+                state.zoom.isDragging = true;
+                state.zoom.startX = e.clientX - state.zoom.panX;
+                state.zoom.startY = e.clientY - state.zoom.panY;
+                canvas.style.cursor = 'grabbing';
+                e.preventDefault();
+                return;
+            }
+            
+            // Sağ tık (button === 2) sınır ekleme yapmaz, sadece contextmenu ile silme yapar
+            if (e.button === 2) return;
+            
             e.preventDefault();
             e.stopPropagation();
             // Double-click'in ilk click'inde sınır eklemeyi engelle
@@ -1659,6 +1699,10 @@ function setupBoundaryMode() {
 
         canvas.addEventListener('mousemove', (e) => {
             if (!state.boundaryMode) return;
+            
+            // Space tuşu basılıyken ve zoom sürüklemesi aktifse - boundary işlemlerini atla
+            if (state.spaceKeyPressed && state.zoom.isDragging) return;
+            
             if (state.boundaryDrag.active) {
                 const natX = screenToNaturalX(e, img);
                 const clamped = Math.max(0, Math.min(img.naturalWidth - 1, natX));
@@ -1669,11 +1713,21 @@ function setupBoundaryMode() {
                 // Hover efekti — yakın sınır var mı?
                 const natX = screenToNaturalX(e, img);
                 const nearIdx = findNearBoundaryIndex(natX, img);
-                canvas.style.cursor = nearIdx >= 0 ? 'grab' : 'col-resize';
+                // Space tuşu basılıyken grab cursor göster
+                if (state.spaceKeyPressed) {
+                    canvas.style.cursor = 'grab';
+                } else {
+                    canvas.style.cursor = nearIdx >= 0 ? 'grab' : 'col-resize';
+                }
             }
         });
 
         canvas.addEventListener('mouseup', (e) => {
+            // Space tuşu basılıyken zoom sürüklemesi bitince cursor'u düzelt
+            if (state.spaceKeyPressed && state.zoom.isDragging) {
+                canvas.style.cursor = 'grab';
+                return;
+            }
             if (state.boundaryDrag.active) {
                 state.boundaries.sort((a, b) => a - b);
                 state.boundaryDrag.active = false;
@@ -1714,6 +1768,14 @@ function setupBoundaryMode() {
 
     // Global mouseup: sürükleme canvas dışında bırakılırsa da bitirilsin
     document.addEventListener('mouseup', () => {
+        // Space tuşu basılıyken zoom sürüklemesi bitince cursor'u düzelt
+        if (state.spaceKeyPressed && state.zoom.isDragging) {
+            state.zoom.isDragging = false;
+            [DOM.originalBoundaryCanvas, DOM.processedBoundaryCanvas].forEach(c => {
+                if (c) c.style.cursor = 'grab';
+            });
+            return;
+        }
         if (state.boundaryDrag.active) {
             state.boundaries.sort((a, b) => a - b);
             state.boundaryDrag.active = false;
@@ -1807,6 +1869,20 @@ async function init() {
     setupXCalSliders();
     setupBoundaryMode();
     setupROI();
+
+    // Space tuşu dinleyicisi (zoom/pan modu için)
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && !state.spaceKeyPressed) {
+            state.spaceKeyPressed = true;
+            document.body.style.cursor = 'grab';
+        }
+    });
+    document.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+            state.spaceKeyPressed = false;
+            document.body.style.cursor = '';
+        }
+    });
 
     // Resim yüklenince canvas boyutunu eşitle ve X işaretlerini yeniden çiz
     [DOM.originalImage, DOM.processedImage].forEach(img => {
