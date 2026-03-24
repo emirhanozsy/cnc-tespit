@@ -348,6 +348,10 @@ def extract_profile(image: np.ndarray, params: Optional[Dict] = None) -> Dict:
         "bottom_edge": bottom_edge_smoothed,
         "diameter_px": diameter_px_smoothed,
         "center_y": center_y_smoothed,
+        # Ham (smoothing öncesi) kenarlar — fixed_x hassas ölçüm için
+        "top_edge_raw": top_edge,
+        "bottom_edge_raw": bottom_edge,
+        "diameter_px_raw": diameter_px,
         "x_start": x_start,
         "x_end": x_end,
         "contour": main_contour,

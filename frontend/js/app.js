@@ -55,9 +55,14 @@ const state = {
     // ROI
     roiActive: false,
     roi: null, // {x, y, width, height}
-    // Noktasal Ölçüm Modu
-    pointMode: false,
-    measurePoints: [],         // Mutlak x koordinatları
+    // Fixed Point Drag Mode
+    fixedPointsDragMode: false,
+    fixedPoints: [],           // [{code, x_abs, type, x_pixel_start, x_pixel_end, top_y, bottom_y}]
+    fixedPointDrag: {
+        active: false,
+        pointCode: null,
+        index: -1
+    },
 };
 
 const DOM = {};
@@ -190,6 +195,7 @@ function cacheDom() {
     DOM.btnTuneSave = document.getElementById('btn-tune-save');
     DOM.btnTuneClose = document.getElementById('btn-tune-close');
     DOM.tuneGroupX = document.getElementById('tune-group-x');
+    DOM.btnToggleFixedDrag = document.getElementById('btn-toggle-fixed-drag');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1702,7 +1708,7 @@ function setupBoundaryMode() {
         if (!canvas || !img) return;
 
         canvas.addEventListener('mousedown', (e) => {
-            if (!state.boundaryMode) return;
+            if (!state.boundaryMode && !state.fixedPointsDragMode) return;
             
             // Space tuşu basılıysa zoom/pan modu aktif - boundary işlemlerini atla
             // ve zoom sürüklemesini başlat
@@ -1723,38 +1729,74 @@ function setupBoundaryMode() {
             // Double-click'in ilk click'inde sınır eklemeyi engelle
             if (e.detail >= 2) return;
             const natX = screenToNaturalX(e, img);
-            const nearIdx = findNearBoundaryIndex(natX, img);
-            if (nearIdx >= 0) {
-                // Var olan sınırı sürükle
-                state.boundaryDrag.active = true;
-                state.boundaryDrag.index = nearIdx;
-                state.boundaryDrag.startScreenX = e.clientX;
-                canvas.style.cursor = 'grabbing';
-            } else {
-                // Yeni sınır ekle
-                state.boundaries.push(natX);
-                state.boundaries.sort((a, b) => a - b);
-                drawBoundaryOverlay();
-                updateBoundaryCount();
-                showToast(`Sınır eklendi: x=${natX}px`, 'info');
+
+            // 1. Sabit Nokta Sürükleme Kontrolü
+            if (state.fixedPointsDragMode) {
+                const nearIdx = findNearFixedPointIndex(natX, img);
+                if (nearIdx >= 0) {
+                    const p = state.fixedPoints[nearIdx];
+                    state.fixedPointDrag.active = true;
+                    state.fixedPointDrag.pointCode = p.code;
+                    state.fixedPointDrag.index = nearIdx;
+                    canvas.style.cursor = 'grabbing';
+                    return;
+                }
+            }
+
+            // 2. Manuel Sınır Sürükleme Kontrolü
+            if (state.boundaryMode) {
+                const nearIdx = findNearBoundaryIndex(natX, img);
+                if (nearIdx >= 0) {
+                    // Var olan sınırı sürükle
+                    state.boundaryDrag.active = true;
+                    state.boundaryDrag.index = nearIdx;
+                    state.boundaryDrag.startScreenX = e.clientX;
+                    canvas.style.cursor = 'grabbing';
+                } else {
+                    // Yeni sınır ekle
+                    state.boundaries.push(natX);
+                    state.boundaries.sort((a, b) => a - b);
+                    drawBoundaryOverlay();
+                    updateBoundaryCount();
+                    showToast(`Sınır eklendi: x=${natX}px`, 'info');
+                }
             }
         });
 
         canvas.addEventListener('mousemove', (e) => {
-            if (!state.boundaryMode) return;
+            if (!state.boundaryMode && !state.fixedPointsDragMode) return;
             
             // Space tuşu basılıyken ve zoom sürüklemesi aktifse - boundary işlemlerini atla
             if (state.spaceKeyPressed && state.zoom.isDragging) return;
             
+            const natX = screenToNaturalX(e, img);
+
+            // 1. Sabit Nokta Sürükleme İşlemi
+            if (state.fixedPointDrag.active) {
+                const clamped = Math.max(0, Math.min(img.naturalWidth - 1, natX));
+                // x_pixel_start ve x_pixel_end'i güncelle (merkez natX olacak şekilde)
+                const p = state.fixedPoints[state.fixedPointDrag.index];
+                const halfW = (p.x_pixel_end - p.x_pixel_start) / 2 || 0;
+                p.x_pixel_start = clamped - halfW;
+                p.x_pixel_end = clamped + halfW;
+                drawFixedPointsOverlay();
+                return;
+            }
+
+            // 2. Manuel Sınır Sürükleme İşlemi
             if (state.boundaryDrag.active) {
-                const natX = screenToNaturalX(e, img);
                 const clamped = Math.max(0, Math.min(img.naturalWidth - 1, natX));
                 state.boundaries[state.boundaryDrag.index] = clamped;
                 drawBoundaryOverlay();
                 updateBoundaryCount();
-            } else {
-                // Hover efekti — yakın sınır var mı?
-                const natX = screenToNaturalX(e, img);
+                return;
+            }
+
+            // Hover efektleri
+            if (state.fixedPointsDragMode && !state.boundaryMode) {
+                const nearIdx = findNearFixedPointIndex(natX, img);
+                canvas.style.cursor = nearIdx >= 0 ? 'col-resize' : 'default';
+            } else if (state.boundaryMode) {
                 const nearIdx = findNearBoundaryIndex(natX, img);
                 // Space tuşu basılıyken grab cursor göster
                 if (state.spaceKeyPressed) {
@@ -1765,12 +1807,59 @@ function setupBoundaryMode() {
             }
         });
 
-        canvas.addEventListener('mouseup', (e) => {
+        canvas.addEventListener('mouseup', async (e) => {
             // Space tuşu basılıyken zoom sürüklemesi bitince cursor'u düzelt
             if (state.spaceKeyPressed && state.zoom.isDragging) {
                 canvas.style.cursor = 'grab';
                 return;
             }
+
+            // Fixed Point Sürükleme Bitişi
+            if (state.fixedPointDrag.active) {
+                const p = state.fixedPoints[state.fixedPointDrag.index];
+                state.fixedPointDrag.active = false;
+                state.fixedPointDrag.pointCode = null;
+                state.fixedPointDrag.index = -1;
+                canvas.style.cursor = 'default';
+                
+                // Backend güncellemesini yap
+                try {
+                    // x_abs = natX - x_parca_start. Ama burada x_pixel_start üzerinden gidelim.
+                    // Backend x_abs'i profil başlangıcından itibaren mesafe olarak bekliyor.
+                    // displayFixedMeasurementResults içinde gelen m.x_abs verisini bulmalıyız.
+                    // Profil extractor sonucuna ihtiyacımız var ama x_pixel_start verilmişse
+                    // biz natX i doğrudan p.x_abs olarak güncellersek backend onu kullanır.
+                    // Aslında en iyisi sürüklenen natX değerini p.x_abs'e eşitlemek (eğer method fixed_x ise).
+                    
+                    const natX = screenToNaturalX(e, img);
+                    // DİKKAT: Backend'de x_abs, parçanın sol ucundan itibaren piksellerdir.
+                    // Bu yüzden mevcut x_pixel_start ve backend'den gelen m.x_abs arasındaki farkı kullanmalıyız.
+                    // Veya daha iyisi, performFixedMeasurement() tekrar çağrıldığında 
+                    // yeni x_abs gönderilsin.
+                    
+                    // Önce şablonu güncelle:
+                    // P.x_abs'i natX'e göre güncellemek biraz karmaşık çünkü parçanın x_start_abs'ine ihtiyacımız var.
+                    // Ancak backend /api/measure/fixed sonucunda x_pixel_start'ı zaten parça başlangıcına göre veriyor.
+                    // p.x_abs = p.x_pixel_start - x_profile_start
+                    
+                    // Şimdilik sadece p.code ve yeni x bilgisini gönderen bir proxy mantığı kuralım.
+                    // En doğrusu: x_abs'in yeni değerini hesaplamak.
+                    // state.lastProfile.x_start gibi bir değişkenimiz yok.
+                    // Ama m.x_pixel_start ve m.x_abs (şablondaki değer) arasındaki fark sabittir = profile_x_start.
+                    
+                    const currentXPixel = (p.x_pixel_start + p.x_pixel_end) / 2;
+                    const profileXStart = currentXPixel - (p.x_abs || 0); // Bu değişmez
+                    const newXAbs = Math.round(natX - profileXStart);
+                    
+                    await updateTemplatePoint(p.code, newXAbs);
+                    showToast(`${p.code} konumu güncellendi, ölçüm yenileniyor...`, 'success');
+                    performFixedMeasurement();
+                } catch (err) {
+                    showToast('Güncelleme hatası: ' + err.message, 'error');
+                }
+                return;
+            }
+
             if (state.boundaryDrag.active) {
                 state.boundaries.sort((a, b) => a - b);
                 state.boundaryDrag.active = false;
@@ -2030,6 +2119,9 @@ function displayFixedMeasurementResults(data) {
     
     if (!tbody || !panel) return;
     
+    // Geçerli sabit noktaları state'e kaydet (sürükleme için)
+    state.fixedPoints = data.measurements || [];
+    
     // Paneli göster
     panel.classList.remove('hidden');
     
@@ -2092,6 +2184,11 @@ function displayFixedMeasurementResults(data) {
         
         tbody.appendChild(row);
     });
+
+    // Çizimleri yenile (eğer drag mode açıksa)
+    if (state.fixedPointsDragMode) {
+        drawFixedPointsOverlay();
+    }
     
     // Overlay görüntüsünü güncelle
     if (data.overlay_image) {
@@ -2137,6 +2234,10 @@ function setupFixedMeasurement() {
             if (DOM.fineTuneContainer) DOM.fineTuneContainer.classList.add('hidden');
             performFixedMeasurement();
         });
+    }
+    
+    if (DOM.btnToggleFixedDrag) {
+        DOM.btnToggleFixedDrag.addEventListener('click', toggleFixedPointsDragMode);
     }
 }
 
@@ -2397,3 +2498,116 @@ function drawPointMarkers() {
         });
     });
 }
+
+/** Sabit ölçüm noktaları sürükleme modunu aç/kapat */
+function toggleFixedPointsDragMode() {
+    state.fixedPointsDragMode = !state.fixedPointsDragMode;
+    const active = state.fixedPointsDragMode;
+    
+    if (DOM.btnToggleFixedDrag) {
+        DOM.btnToggleFixedDrag.classList.toggle('active', active);
+        DOM.btnToggleFixedDrag.textContent = active ? '🖱️ Düzenleme Modu: AÇIK' : '🖱️ Düzenleme Modu: KAPALI';
+    }
+    
+    // Canvas pointer-events ayarla
+    [DOM.originalBoundaryCanvas, DOM.processedBoundaryCanvas].forEach(c => {
+        if (c) {
+            c.classList.toggle('active', active || state.boundaryMode);
+            // Z-index çakışmaması için boundaryMode ile aynı mantık
+            c.style.pointerEvents = (active || state.boundaryMode) ? 'auto' : 'none';
+        }
+    });
+
+    if (active) {
+        showToast('Düzenleme modu aktif. Ölçüm çizgilerini sürükleyerek taşıyabilirsiniz.', 'info');
+        // Eğer boundary mode açıksa kapat (karışıklık olmasın)
+        if (state.boundaryMode) setBoundaryMode(false);
+    }
+    
+    drawFixedPointsOverlay();
+}
+
+/** Sabit ölçüm çizgilerini canvas üzerinde manuel çiz */
+function drawFixedPointsOverlay() {
+    const pairs = [
+        { canvas: DOM.originalBoundaryCanvas, img: DOM.originalImage },
+        { canvas: DOM.processedBoundaryCanvas, img: DOM.processedImage },
+    ];
+
+    pairs.forEach(({ canvas, img }) => {
+        if (!canvas || !img || !img.naturalWidth) return;
+        if (!syncCanvasSize(canvas, img)) return;
+
+        const ctx = canvas.getContext('2d');
+        // Eğer boundary mode da açıksa, drawBoundaryOverlay zaten clear yapıyor.
+        // Ama temizlik garantisi için biz de yapalım (sadece drag mode açıkken).
+        if (state.fixedPointsDragMode && !state.boundaryDrag.active) {
+             ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        const scaleX = canvas.width / img.naturalWidth;
+        const h = canvas.height;
+
+        state.fixedPoints.forEach((p, idx) => {
+            if (p.type !== 'diameter' || p.x_pixel_start === null) return;
+            
+            const midX = (p.x_pixel_start + (p.x_pixel_end || p.x_pixel_start)) / 2;
+            const dx = midX * scaleX;
+            const isDragging = state.fixedPointDrag.active && state.fixedPointDrag.pointCode === p.code;
+            
+            // Çizgi stili
+            ctx.save();
+            ctx.strokeStyle = isDragging ? '#ffffff' : '#f87171'; // Kırmızı tonu
+            ctx.lineWidth = isDragging ? 3 : 2;
+            ctx.setLineDash([8, 4]);
+            
+            ctx.beginPath();
+            ctx.moveTo(dx, 0);
+            ctx.lineTo(dx, h);
+            ctx.stroke();
+            
+            // Etiket (Code)
+            ctx.setLineDash([]);
+            ctx.fillStyle = isDragging ? '#ffffff' : '#f87171';
+            ctx.font = 'bold 12px JetBrains Mono, monospace';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 4;
+            ctx.fillText(p.code, dx, 15);
+            
+            // Alt kısma da etiket
+            ctx.fillText(p.code, dx, h - 5);
+            
+            // Sürükleme tutacı (opsiyonel ama yardımcı olur)
+            ctx.beginPath();
+            ctx.arc(dx, h/2, 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        });
+    });
+}
+
+/** Mouse konumuna en yakın sabit ölçüm noktasını bulur */
+function findNearFixedPointIndex(natX, img) {
+    if (!state.fixedPoints || state.fixedPoints.length === 0) return -1;
+    
+    const threshold = 15; // piksel cinsinden tolerans
+    let minDist = Infinity;
+    let foundIdx = -1;
+
+    state.fixedPoints.forEach((p, idx) => {
+        if (p.type !== 'diameter' || p.x_pixel_start === null) return;
+        
+        const midX = (p.x_pixel_start + (p.x_pixel_end || p.x_pixel_start)) / 2;
+        const dist = Math.abs(natX - midX);
+        
+        if (dist < threshold && dist < minDist) {
+            minDist = dist;
+            foundIdx = idx;
+        }
+    });
+
+    return foundIdx;
+}
+

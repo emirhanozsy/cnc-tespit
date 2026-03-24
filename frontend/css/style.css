@@ -1571,7 +1571,14 @@ input[type="range"]::-moz-range-thumb {
     position: absolute;
     top: -50%;
     left: -50%;
-  .fine-tune-controls {
+    width: 200%;
+    height: 200%;
+    background: conic-gradient(from 0deg, transparent, rgba(59, 130, 246, 0.03), transparent 30%);
+    animation: spin 8s linear infinite;
+    pointer-events: none;
+}
+
+.fine-tune-controls {
     display: flex;
     align-items: center;
     gap: var(--space-xl);
@@ -1709,4 +1716,20 @@ input[type="range"]::-moz-range-thumb {
     background: rgba(255, 255, 255, 0.1);
     color: var(--text-primary);
     border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Fixed Measurement Draggable Lines */
+#btn-toggle-fixed-drag.active {
+    background: var(--accent-primary) !important;
+    border-color: var(--accent-secondary) !important;
+    color: white !important;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+.fixed-line-hover {
+    cursor: col-resize !important;
+}
+
+.fixed-line-dragging {
+    cursor: grabbing !important;
 }

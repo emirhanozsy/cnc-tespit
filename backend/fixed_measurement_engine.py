@@ -202,13 +202,19 @@ class FixedMeasurementEngine:
         x_abs: int,
         profile: Dict,
         y_calibration: float,
-        sample_width_px: int = 3
+        sample_width_px: int = 10
     ) -> Tuple[Optional[float], Optional[int], Optional[int], Optional[float], Optional[float]]:
         """
         Görüntü üzerindeki sabit bir X koordinatında çapı ölçer.
         
+        Ham (smoothing öncesi) kenar verilerini kullanarak basamak geçişlerinde
+        hassas ölçüm sağlar. Smoothed veriler sadece fallback olarak kullanılır.
+        
+        Gürültü direnci: Geniş örnekleme penceresi (±sample_width_px) içinde
+        IQR tabanlı outlier temizliği + medyan hesaplama.
+        
         Args:
-            x_abs: Mutlak X koordinatı (piksel)
+            x_abs: Mutlak X koordinatı (piksel, parça başlangıcından itibaren)
             profile: Profil verisi
             y_calibration: Y kalibrasyonu (piksel/mm)
             sample_width_px: Ölçüm yapılacak X etrafındaki örnekleme genişliği
@@ -216,19 +222,21 @@ class FixedMeasurementEngine:
         Returns:
             (diameter_mm, x_start_px, x_end_px, top_y, bottom_y)
         """
-        diameter_px_arr = np.array(profile.get('diameter_px', []), dtype=float)
-        top_edge = profile.get('top_edge', [])
-        bottom_edge = profile.get('bottom_edge', [])
+        # Ham kenarlar varsa onları kullan (smoothing geometriyi bozabilir)
+        has_raw = 'diameter_px_raw' in profile and profile['diameter_px_raw']
+        diameter_source = profile.get('diameter_px_raw') if has_raw else profile.get('diameter_px', [])
+        top_edge_source = profile.get('top_edge_raw') if has_raw else profile.get('top_edge', [])
+        bottom_edge_source = profile.get('bottom_edge_raw') if has_raw else profile.get('bottom_edge', [])
+        
+        diameter_px_arr = np.array(diameter_source, dtype=float)
         x_start_parca = profile.get('x_start', 0)
         
-        # Bilgi: x_abs artık mutlak görüntü koordinatı değil, 
-        # parçanın sol ucundan (x_start_parca) itibaren olan mesafedir.
         x_rel = int(x_abs)
         
         if x_rel < 0 or x_rel >= len(diameter_px_arr):
             return None, None, None, None, None
             
-        # Parça üzerinde ilgili noktayı örnekle (gürültü azaltma için)
+        # Örnekleme penceresi
         sample_start = max(0, x_rel - sample_width_px)
         sample_end = min(len(diameter_px_arr), x_rel + sample_width_px + 1)
         
@@ -236,22 +244,34 @@ class FixedMeasurementEngine:
         valid = segment[segment > 0]
         
         if len(valid) == 0:
-            # Sadece o noktadaki değeri dene
             val = diameter_px_arr[x_rel]
             if val > 0:
-                valid = [val]
+                valid = np.array([val])
             else:
                 return None, None, None, None, None
+        
+        # IQR tabanlı outlier temizliği (basamak geçişlerinde karışık değerleri ele)
+        if len(valid) >= 5:
+            q1 = np.percentile(valid, 25)
+            q3 = np.percentile(valid, 75)
+            iqr = q3 - q1
+            # IQR çok küçükse (düz yüzey) — dar aralık kullan
+            fence = max(iqr * 1.5, 2.0)  # En az 2 piksel tolerans
+            lower_bound = q1 - fence
+            upper_bound = q3 + fence
+            filtered = valid[(valid >= lower_bound) & (valid <= upper_bound)]
+            if len(filtered) >= 3:
+                valid = filtered
         
         median_diameter_px = float(np.median(valid))
         diameter_mm = median_diameter_px / y_calibration
         
-        # Overlay için (Mutlak görüntü koordinatları)
+        # Overlay için kenar konumu (ham kenarlardan)
         mid_idx = x_rel
-        top_y = top_edge[mid_idx] if mid_idx < len(top_edge) and top_edge[mid_idx] is not None else None
-        bot_y = bottom_edge[mid_idx] if mid_idx < len(bottom_edge) and bottom_edge[mid_idx] is not None else None
+        top_y = top_edge_source[mid_idx] if mid_idx < len(top_edge_source) and top_edge_source[mid_idx] is not None else None
+        bot_y = bottom_edge_source[mid_idx] if mid_idx < len(bottom_edge_source) and bottom_edge_source[mid_idx] is not None else None
         
-        # Overlay görüntüsü için mutlak X koordinatları (parça başlangıcı + mesafe)
+        # Overlay görüntüsü için mutlak X koordinatları
         x_px_start = x_start_parca + x_rel - sample_width_px
         x_px_end = x_start_parca + x_rel + sample_width_px
         
